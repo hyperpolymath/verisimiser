@@ -1,0 +1,223 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= VeriSimiser
+Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+== What Is This?
+
+VeriSimiser augments existing databases with capabilities from
+https://github.com/hyperpolymath/nextgen-databases[VeriSimDB]'s octad model —
+specifically the capabilities that work as genuine piggybacks without requiring
+you to replace your database.
+
+**Honest framing**: this is not a pure bolt-on like the language -isers.
+Language -isers generate a separate wrapper alongside your code — one-way
+dependency, your code untouched. Database augmentation is fundamentally
+different because it interacts with shared mutable state. VeriSimiser is
+therefore split into two tiers:
+
+* **Tier 1 (true piggyback)** — capabilities that sit alongside or in front
+  of your database, never touching its storage engine. These are safe bolt-ons.
+* **Tier 2 (augmentation layer)** — capabilities that require additional
+  storage alongside your database. These are honest about being "VeriSimDB
+  with your database as one backend" rather than pretending to be invisible.
+
+== VeriSimDB's Octad: Eight Modalities
+
+Each entity in VeriSimDB exists simultaneously across up to 8 representations:
+
+[cols="1,2,1,1"]
+|===
+| Modality | Purpose | Storage | VeriSimiser Tier
+
+| **Graph** | RDF triples and property graph edges | Pure Rust | Tier 2
+| **Vector** | Embeddings for similarity search | HNSW | Tier 2
+| **Tensor** | Multi-dimensional numeric data | ndarray/Burn | Tier 2
+| **Semantic** | Type annotations and CBOR proof blobs | CBOR | Tier 2
+| **Document** | Full-text searchable content | Tantivy | Tier 2
+| **Temporal** | Version history and time-series | chrono | Tier 1 ✓
+| **Provenance** | Origin tracking and transformation chain | SHA-256 hash-chain | Tier 1 ✓
+| **Spatial** | Geospatial coordinates and geometries | R-tree | Tier 2
+|===
+
+== Tier 1: True Piggybacks
+
+These work like PostGIS — they add capability without replacing anything.
+
+=== Cross-Modal Drift Detection
+
+The jewel of VeriSimDB. Drift detection monitors whether representations
+of the same entity stay consistent across modalities. VeriSimiser can
+overlay drift detection onto any database:
+
+* Your database stores the primary data (unchanged)
+* VeriSimiser maintains a lightweight **drift index** alongside it
+* Queries pass through to your database normally
+* VeriSimiser intercepts results and checks for cross-modal inconsistencies
+* Alerts when representations drift apart
+
+This is a **read-path augmentation** — it observes query results, it doesn't
+modify them. Safe to add, safe to remove, no data dependency.
+
+VeriSimDB detects eight categories of cross-modal drift:
+
+1. Structural drift — schema changes not reflected across modalities
+2. Semantic drift — meaning divergence between representations
+3. Temporal drift — version skew between modalities
+4. Statistical drift — distribution shift in vector/tensor spaces
+5. Referential drift — broken links between graph and document modalities
+6. Provenance drift — transformation chain inconsistencies
+7. Spatial drift — coordinates inconsistent with other modalities
+8. Embedding drift — vector embeddings stale relative to source documents
+
+=== Provenance Tracking
+
+Hash-chain verified origin tracking for every piece of data. VeriSimiser
+can add provenance to any database as a sidecar:
+
+* Every write is intercepted and a provenance record created
+* SHA-256 hash chain links provenance records in order
+* Query results can include provenance metadata
+* Full audit trail: who created, when, from what source, what transformations
+
+This is a **write-path observer** — it records what happened, it doesn't
+change what happened. The provenance chain is stored in a separate sidecar
+(SQLite, file, or VeriSimDB instance), never in your primary database.
+
+=== Temporal Versioning
+
+Automatic version history for entities. VeriSimiser can maintain a temporal
+sidecar that records every state change:
+
+* Point-in-time queries: "what did this entity look like at time T?"
+* Diff queries: "what changed between T1 and T2?"
+* Rollback capability: restore any entity to a previous state
+* Retention policies: auto-prune history older than N days
+
+This piggybacks onto write events (triggers, CDC, or application-level hooks)
+and stores version history in a separate sidecar.
+
+== Tier 2: Augmentation Layer
+
+These capabilities require additional storage alongside your database.
+They're honest about being "VeriSimDB modalities with your database as the
+document/primary store." This is still valuable — it's how you get octad
+capabilities incrementally — but it's not a bolt-on.
+
+* **Graph overlay**: Add RDF triples and property graph edges to entities
+  in your relational database. Stored in a separate graph index.
+* **Vector overlay**: Add embeddings for similarity search. Stored in HNSW
+  index alongside your database.
+* **Tensor overlay**: Add multi-dimensional numeric data. Stored in
+  ndarray-backed sidecar.
+* **Semantic overlay**: Add type annotations and proof blobs. Stored in
+  CBOR sidecar.
+* **Spatial overlay**: Add geospatial coordinates. Stored in R-tree sidecar.
+
+Each Tier 2 modality has its own storage and can be enabled independently.
+Your primary database remains the source of truth for its native data.
+
+== The Manifest
+
+[source,toml]
+----
+[verisimiser]
+name = "my-augmented-db"
+
+[database]
+target-db = "postgresql"
+connection-string = "postgres://localhost/mydb"
+
+# Tier 1: true piggybacks (no additional storage in your database)
+[tier1]
+drift-detection = true       # cross-modal drift monitoring
+provenance = true             # SHA-256 hash-chain audit trail
+temporal-versioning = true    # automatic version history
+
+[tier1.provenance]
+sidecar = "sqlite"            # sqlite | file | verisimdb
+sidecar-path = ".verisimiser/provenance.db"
+
+[tier1.temporal]
+sidecar = "sqlite"
+retention-days = 90
+
+# Tier 2: augmentation layer (additional storage alongside your database)
+[tier2]
+graph = false                 # RDF/property graph overlay
+vector = false                # embedding similarity search
+tensor = false                # multi-dimensional numeric
+semantic = false              # type annotations + proof blobs
+spatial = false               # geospatial coordinates
+
+[tier2.vector]
+# model = "sentence-transformers/all-MiniLM-L6-v2"
+# dimensions = 384
+----
+
+== Architecture
+
+[source]
+----
+Your Application
+      │
+      ├──── writes ────► Your Database (unchanged)
+      │                       │
+      │                  VeriSimiser intercepts
+      │                       │
+      │         ┌─────────────┼──────────────┐
+      │         │             │              │
+      │    Drift Index   Provenance     Temporal
+      │    (Tier 1)      Sidecar        Sidecar
+      │                  (Tier 1)       (Tier 1)
+      │
+      └──── optional ──► Tier 2 Sidecars
+                          (Graph, Vector, Tensor,
+                           Semantic, Spatial)
+----
+
+**Interception methods** (configurable per database):
+
+* **PostgreSQL**: logical replication / `pg_notify` / triggers
+* **MySQL**: binlog CDC / triggers
+* **SQLite**: `sqlite3_update_hook` / WAL monitoring
+* **MongoDB**: change streams
+* **Application-level**: middleware / ORM hooks
+
+== Relationship to VeriSimDB
+
+VeriSimiser is NOT a replacement for VeriSimDB. It's a gateway drug.
+
+* **VeriSimiser Tier 1** gives you drift detection, provenance, and temporal
+  versioning on your existing database. Zero commitment.
+* **VeriSimiser Tier 2** gives you individual octad modalities as sidecars.
+  Incremental adoption.
+* **Full VeriSimDB** gives you the complete octad with native cross-modal
+  querying, VQL, and built-in drift normalisation. Full commitment.
+
+The migration path is: Tier 1 → Tier 2 → full VeriSimDB (if you want it).
+Most users will be happy at Tier 1 or Tier 2.
+
+== Integration with TypedQLiser
+
+VeriSimiser works alongside https://github.com/hyperpolymath/typedqliser[TypedQLiser]:
+
+* TypedQLiser type-checks your queries (compile-time, no runtime cost)
+* VeriSimiser augments your database with octad capabilities (runtime)
+* Together: formally verified queries against an augmented database
+
+== Status
+
+**Pre-alpha.** Architecture defined, tier system designed. Tier 1 (drift
+detection, provenance, temporal versioning) is the priority implementation.
+
+Part of the https://github.com/hyperpolymath/iseriser[-iser family].
+**#3 priority** (after TypedQLiser and Chapeliser).
+
+== License
+
+SPDX-License-Identifier: PMPL-1.0-or-later
