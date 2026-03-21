@@ -11,39 +11,30 @@
   (project-context
     (name "verisimiser")
     (description "Augment any database with VeriSimDB octad capabilities")
-    (status "pre-alpha")
-    (priority "3")
-    (ecosystem "-iser family (https://github.com/hyperpolymath/iseriser)"))
+    (status "phase-1-complete")
+    (priority "—")
+    (ecosystem "-iser family (https://github.com/hyperpolymath/iseriser)")
+    (domain "Database augmentation with VeriSimDB octad model"))
 
   (current-position
-    (phase "scaffold-documented")
-    (completion-percentage 10)
-    (milestone "Architecture defined, CLI scaffolded, RSR template complete, ABI/FFI bespoke"))
+    (phase "phase-1-complete")
+    (completion-percentage 45)
+    (milestone "Phase 1 complete — scaffold, CLI, manifest parser, codegen stubs, ABI types, RSR template"))
 
   (route-to-mvp
-    (step 1 "PostgreSQL Tier 1 MVP: logical replication interception")
-    (step 2 "Provenance sidecar (SQLite): SHA-256 hash-chain write-path observer")
-    (step 3 "Temporal versioning sidecar: point-in-time queries")
-    (step 4 "Cross-modal drift detection: read-path observer with 8-category index")
-    (step 5 "Idris2 ABI proofs: sidecar isolation, hash-chain integrity, version ordering")
-    (step 6 "Zig FFI bridge: compile and link against Idris2 ABI")
-    (step 7 "End-to-end integration test: PostgreSQL -> verisimiser -> VQL-UT query"))
-
-  (completed-actions
-    (action "Bespoke Idris2 ABI: Types.idr (OctadDimension, DatabaseBackend, DriftCategory, AccessPolicy, SidecarIsolation)")
-    (action "Bespoke Idris2 ABI: Layout.idr (OctadRecord 80B, ProvenanceEntry 88B, DriftMeasurement 88B, TemporalSnapshot 48B)")
-    (action "Bespoke Idris2 ABI: Foreign.idr (lifecycle, connect, overlay, provenance, temporal, drift, VQL-UT)")
-    (action "Bespoke Zig FFI: main.zig, build.zig, integration_test.zig")
-    (action "ROADMAP.adoc: Phase 0-6 with database-specific milestones")
-    (action "TOPOLOGY.md: component map, data flow, invariants, memory layouts")
-    (action "0-AI-MANIFEST.a2ml: verisimiser-specific invariants and structure")
-    (action "THREAT-MODEL.adoc: sidecar isolation, hash chain integrity, drift detection")
-    (action "Machine-readable files: AGENTIC, NEUROSYM, PLAYBOOK updated"))
+    (step 1 "Phase 1 — scaffold, CLI, manifest parser, ABI types [COMPLETE]")
+    (step 2 "Phase 2 — core domain logic implementation")
+    (step 3 "Phase 3 — Idris2 ABI formal proofs")
+    (step 4 "Phase 4 — Zig FFI bridge implementation")
+    (step 5 "Phase 5 — integration tests with real targets")
+    (step 6 "Phase 6 — documentation and examples")
+    (step 7 "Phase 7 — Chainguard container + CI hardening")
+    (step 8 "Phase 8 — first release (v0.1.0)"))
 
   (blockers-and-issues
-    (none "Project is in documented scaffold phase — no blockers yet"))
+    (none "No blockers — Phase 1 complete, ready for Phase 2"))
 
   (critical-next-actions
-    (action "Implement PostgreSQL logical replication interception")
-    (action "Build provenance sidecar with SQLite backend")
-    (action "First working end-to-end test with real PostgreSQL instance")))
+    (action "Begin Phase 2 — implement core domain logic for verisimiser")
+    (action "Write property-based tests for manifest parsing")
+    (action "Define Idris2 ABI proof obligations for Phase 3")))
