@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# VeriSimiser manifest for the blog-db example.
+#
+# This example augments a typical blog database (SQLite) with provenance,
+# lineage, temporal versioning, and access control dimensions.
+
+[project]
+name = "blog-example"
+version = "0.1.0"
+description = "Example: augment a blog database with VeriSimDB octad dimensions"
+
+[database]
+backend = "sqlite"
+connection-string-env = "BLOG_DATABASE_URL"
+schema-source = "schema.sql"
+
+[octad]
+enable-provenance = true
+enable-lineage = true
+enable-temporal = true
+enable-access-control = true
+enable-simulation = false
+
+[sidecar]
+storage = "sqlite"
+path = ".verisimdb/sidecar.db"
