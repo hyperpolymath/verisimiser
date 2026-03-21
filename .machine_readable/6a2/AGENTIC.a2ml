@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
-# AGENTIC.a2ml — AI agent constraints and capabilities
+# AGENTIC.a2ml — AI agent constraints and capabilities for verisimiser
 # Defines what AI agents can and cannot do in this repository.
 
 [metadata]
 version = "0.1.0"
-last-updated = "{{CURRENT_DATE}}"
+last-updated = "2026-03-21"
+project = "verisimiser"
 
 [agent-permissions]
 can-edit-source = true
@@ -22,6 +23,18 @@ can-create-files = true
 # - Never use banned languages (TypeScript, Python, Go, etc.)
 # - Never place state files in repository root (must be in .machine_readable/)
 # - Never use AGPL license (use PMPL-1.0-or-later)
+# - Never generate code that writes to the target database from Tier 1
+# - Never break provenance hash chain ordering (append-only)
+# - Never bypass sidecar isolation guarantees
+
+[verisimiser-constraints]
+# Tier 1 sidecar isolation is a hard invariant:
+# - Drift detection: read-path observer ONLY
+# - Provenance: write to sidecar ONLY, never target DB
+# - Temporal: write to sidecar ONLY, never target DB
+tier1-never-writes-target-db = true
+provenance-chain-append-only = true
+hash-algorithm = "SHA-256"
 
 [maintenance-integrity]
 fail-closed = true

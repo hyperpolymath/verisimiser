@@ -1,32 +1,66 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
-= verisimiser Roadmap
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= VeriSimiser Roadmap
 :toc:
 :icons: font
 
 == Phase 0: Scaffold (COMPLETE)
-* [x] RSR template with full CI/CD
-* [x] CLI with subcommands
-* [x] Manifest parser
-* [x] Codegen stubs
-* [x] ABI module stubs
-* [x] README with architecture
+* [x] RSR template with full CI/CD (17 workflows)
+* [x] CLI with subcommands (init, start, drift, provenance, history, status, octad)
+* [x] Manifest parser (verisimiser.toml with tier1/tier2 config)
+* [x] Tier 1 data types (DriftReport, ProvenanceRecord, TemporalVersion)
+* [x] ABI module stubs (Idris2 + Zig FFI)
+* [x] README with two-tier architecture and honest framing
 
-== Phase 1: Core Implementation
-* [ ] Implement target-language-specific code generation
-* [ ] Write Idris2 ABI proofs for core invariants
-* [ ] Build Zig FFI bridge
-* [ ] First working end-to-end example
-* [ ] Integration tests
+== Phase 1: PostgreSQL Tier 1 MVP
+* [ ] PostgreSQL logical replication interception
+* [ ] Provenance sidecar (SQLite) — write-path observer
+* [ ] SHA-256 hash-chain integrity for provenance records
+* [ ] Temporal versioning sidecar — point-in-time queries
+* [ ] Cross-modal drift detection — read-path observer
+* [ ] Drift index with 8-category classification
+* [ ] Idris2 ABI proofs: sidecar isolation, hash-chain integrity, version ordering
+* [ ] Zig FFI bridge: database connection, overlay operations, VQL-UT queries
+* [ ] End-to-end test: PostgreSQL -> verisimiser overlay -> VQL-UT query
 
-== Phase 2: Polish
-* [ ] Error messages and diagnostics
+== Phase 2: Multi-Backend Support
+* [ ] SQLite interception via sqlite3_update_hook / WAL monitoring
+* [ ] MongoDB interception via change streams
+* [ ] Redis interception via keyspace notifications
+* [ ] MySQL interception via binlog CDC
+* [ ] Application-level middleware / ORM hooks
+* [ ] Backend-agnostic interception trait abstraction
+* [ ] Per-backend integration tests
+
+== Phase 3: Tier 2 Overlays
+* [ ] Graph overlay (RDF triples / property graph edges)
+* [ ] Vector overlay (HNSW embedding similarity search)
+* [ ] Tensor overlay (ndarray multi-dimensional numeric data)
+* [ ] Semantic overlay (CBOR type annotations + proof blobs)
+* [ ] Document overlay (Tantivy full-text search)
+* [ ] Spatial overlay (R-tree geospatial coordinates)
+* [ ] Independent enable/disable per overlay via manifest
+
+== Phase 4: VQL-UT Integration
+* [ ] VQL-UT type-safe query parsing
+* [ ] Cross-tier queries (Tier 1 + Tier 2 in single query)
+* [ ] TypedQLiser integration for compile-time query validation
+* [ ] Query planner for multi-sidecar operations
+* [ ] Performance benchmarks: overhead of augmentation layer
+
+== Phase 5: Production Hardening
+* [ ] Retention policies (auto-prune temporal history)
+* [ ] Sidecar compaction and garbage collection
+* [ ] Concurrent access safety (multi-writer provenance chains)
+* [ ] Backup and restore for sidecars
+* [ ] Monitoring and alerting integration
+* [ ] Error recovery and graceful degradation
 * [ ] Shell completions (bash, zsh, fish)
-* [ ] CI/CD for the generated artifacts
-* [ ] Performance benchmarks
-* [ ] Additional examples
 
-== Phase 3: Ecosystem
-* [ ] PanLL panel integration
-* [ ] BoJ-server cartridge
-* [ ] VeriSimDB backing store for results
+== Phase 6: Ecosystem
+* [ ] PanLL panel for drift monitoring dashboard
+* [ ] BoJ-server cartridge (MCP integration)
+* [ ] SqueakWell integration (database recovery via cross-modal constraint propagation)
+* [ ] Migration tooling: Tier 1 -> Tier 2 -> full VeriSimDB
 * [ ] Publish to crates.io
+* [ ] Chainguard container image

@@ -1,25 +1,29 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
-# PLAYBOOK.a2ml — Operational playbook
+# PLAYBOOK.a2ml — Operational playbook for verisimiser
 # Runbooks, incident response, deployment procedures.
 
 [metadata]
 version = "0.1.0"
-last-updated = "{{CURRENT_DATE}}"
+last-updated = "2026-03-21"
+project = "verisimiser"
 
 [deployment]
-# method = "gitops"  # gitops | manual | ci-triggered
-# target = "container"  # container | binary | library | wasm
+method = "ci-triggered"
+target = "binary"  # Rust CLI binary + Zig shared library
+container = "optional"  # Chainguard-based Containerfile available
 
 [incident-response]
-# 1. Check .machine_readable/STATE.a2ml for current status
+# 1. Check .machine_readable/6a2/STATE.a2ml for current status
 # 2. Review recent commits and CI results
 # 3. Run `just validate` to check compliance
 # 4. Run `just security` to audit for vulnerabilities
+# 5. If provenance chain corruption suspected: run `verisimiser provenance --verify <entity>`
+# 6. If drift detection failing: check sidecar connectivity and drift index
 
 [release-process]
-# 1. Update version in STATE.a2ml, META.a2ml, Justfile
+# 1. Update version in STATE.a2ml, META.a2ml, Cargo.toml, Justfile
 # 2. Run `just release-preflight` (validate + quality + security + maint-hard-pass)
 # 3. Optional local permission hardening: `just perms-snapshot && just perms-lock`
 # 4. Tag and push
@@ -33,3 +37,7 @@ last-updated = "{{CURRENT_DATE}}"
 #   just maint-hard-pass
 # Permission audit:
 #   just perms-audit
+# Verify Zig FFI tests pass:
+#   cd src/interface/ffi && zig build test
+# Verify Rust tests pass:
+#   cargo test

@@ -1,5 +1,6 @@
-// {{PROJECT}} FFI Build Configuration
+// VeriSimiser FFI Build Configuration
 // SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 
 const std = @import("std");
 
@@ -9,7 +10,7 @@ pub fn build(b: *std.Build) void {
 
     // Shared library (.so, .dylib, .dll)
     const lib = b.addSharedLibrary(.{
-        .name = "{{project}}",
+        .name = "verisimiser",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -20,7 +21,7 @@ pub fn build(b: *std.Build) void {
 
     // Static library (.a)
     const lib_static = b.addStaticLibrary(.{
-        .name = "{{project}}",
+        .name = "verisimiser",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -32,8 +33,8 @@ pub fn build(b: *std.Build) void {
 
     // Generate header file for C compatibility
     const header = b.addInstallHeader(
-        b.path("include/{{project}}.h"),
-        "{{project}}.h",
+        b.path("include/verisimiser.h"),
+        "verisimiser.h",
     );
     b.getInstallStep().dependOn(&header.step);
 
@@ -46,7 +47,7 @@ pub fn build(b: *std.Build) void {
 
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
-    const test_step = b.step("test", "Run library tests");
+    const test_step = b.step("test", "Run VeriSimiser FFI unit tests");
     test_step.dependOn(&run_lib_tests.step);
 
     // Integration tests
@@ -60,7 +61,7 @@ pub fn build(b: *std.Build) void {
 
     const run_integration_tests = b.addRunArtifact(integration_tests);
 
-    const integration_test_step = b.step("test-integration", "Run integration tests");
+    const integration_test_step = b.step("test-integration", "Run VeriSimiser integration tests");
     integration_test_step.dependOn(&run_integration_tests.step);
 
     // Documentation
@@ -70,16 +71,16 @@ pub fn build(b: *std.Build) void {
         .optimize = .Debug,
     });
 
-    const docs_step = b.step("docs", "Generate documentation");
+    const docs_step = b.step("docs", "Generate VeriSimiser FFI documentation");
     docs_step.dependOn(&b.addInstallDirectory(.{
         .source_dir = docs.getEmittedDocs(),
         .install_dir = .prefix,
         .install_subdir = "docs",
     }).step);
 
-    // Benchmark (if needed)
+    // Benchmark
     const bench = b.addExecutable(.{
-        .name = "{{project}}-bench",
+        .name = "verisimiser-bench",
         .root_source_file = b.path("bench/bench.zig"),
         .target = target,
         .optimize = .ReleaseFast,
@@ -89,6 +90,6 @@ pub fn build(b: *std.Build) void {
 
     const run_bench = b.addRunArtifact(bench);
 
-    const bench_step = b.step("bench", "Run benchmarks");
+    const bench_step = b.step("bench", "Run VeriSimiser FFI benchmarks");
     bench_step.dependOn(&run_bench.step);
 }

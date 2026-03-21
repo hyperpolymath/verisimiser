@@ -5,7 +5,7 @@
 (state
   (metadata
     (version "0.1.0")
-    (last-updated "2026-03-20")
+    (last-updated "2026-03-21")
     (author "Jonathan D.A. Jewell"))
 
   (project-context
@@ -16,20 +16,34 @@
     (ecosystem "-iser family (https://github.com/hyperpolymath/iseriser)"))
 
   (current-position
-    (phase "initial-scaffold")
-    (completion-percentage 5)
-    (milestone "Architecture defined, CLI scaffolded, RSR template complete"))
+    (phase "scaffold-documented")
+    (completion-percentage 10)
+    (milestone "Architecture defined, CLI scaffolded, RSR template complete, ABI/FFI bespoke"))
 
   (route-to-mvp
-    (step 1 "Replace codegen stubs with target-language-specific generation")
-    (step 2 "Implement Idris2 ABI proofs for core invariants")
-    (step 3 "Build Zig FFI bridge")
-    (step 4 "Integration tests with real-world examples")
-    (step 5 "Documentation and examples"))
+    (step 1 "PostgreSQL Tier 1 MVP: logical replication interception")
+    (step 2 "Provenance sidecar (SQLite): SHA-256 hash-chain write-path observer")
+    (step 3 "Temporal versioning sidecar: point-in-time queries")
+    (step 4 "Cross-modal drift detection: read-path observer with 8-category index")
+    (step 5 "Idris2 ABI proofs: sidecar isolation, hash-chain integrity, version ordering")
+    (step 6 "Zig FFI bridge: compile and link against Idris2 ABI")
+    (step 7 "End-to-end integration test: PostgreSQL -> verisimiser -> VQL-UT query"))
+
+  (completed-actions
+    (action "Bespoke Idris2 ABI: Types.idr (OctadDimension, DatabaseBackend, DriftCategory, AccessPolicy, SidecarIsolation)")
+    (action "Bespoke Idris2 ABI: Layout.idr (OctadRecord 80B, ProvenanceEntry 88B, DriftMeasurement 88B, TemporalSnapshot 48B)")
+    (action "Bespoke Idris2 ABI: Foreign.idr (lifecycle, connect, overlay, provenance, temporal, drift, VQL-UT)")
+    (action "Bespoke Zig FFI: main.zig, build.zig, integration_test.zig")
+    (action "ROADMAP.adoc: Phase 0-6 with database-specific milestones")
+    (action "TOPOLOGY.md: component map, data flow, invariants, memory layouts")
+    (action "0-AI-MANIFEST.a2ml: verisimiser-specific invariants and structure")
+    (action "THREAT-MODEL.adoc: sidecar isolation, hash chain integrity, drift detection")
+    (action "Machine-readable files: AGENTIC, NEUROSYM, PLAYBOOK updated"))
 
   (blockers-and-issues
-    (none "Project is in scaffold phase — no blockers yet"))
+    (none "Project is in documented scaffold phase — no blockers yet"))
 
   (critical-next-actions
-    (action "Implement codegen for primary use case")
-    (action "Write first working example end-to-end")))
+    (action "Implement PostgreSQL logical replication interception")
+    (action "Build provenance sidecar with SQLite backend")
+    (action "First working end-to-end test with real PostgreSQL instance")))

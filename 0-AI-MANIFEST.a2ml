@@ -1,19 +1,27 @@
-# ⚠️ STOP - CRITICAL READING REQUIRED
-
-**THIS FILE MUST BE READ FIRST BY ALL AI AGENTS**
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# STOP - CRITICAL READING REQUIRED
+#
+# THIS FILE MUST BE READ FIRST BY ALL AI AGENTS
 
 ## WHAT IS THIS?
 
-This is the AI manifest for **[YOUR-REPO-NAME]**. It declares:
+This is the AI manifest for **verisimiser**. It declares:
 - Canonical file locations (where things MUST be, and nowhere else)
 - Critical invariants (rules that must NEVER be violated)
 - Repository structure and organization
+
+**verisimiser** augments existing databases with VeriSimDB octad capabilities.
+It wraps PostgreSQL, SQLite, MongoDB, Redis, and other backends to add eight
+octad dimensions (data, metadata, provenance, lineage, constraints, access
+control, temporal, simulation) without requiring database migration.
 
 ## CANONICAL LOCATIONS (UNIVERSAL RULE)
 
 ### Machine-Readable Metadata: `.machine_readable/` ONLY
 
-These 6 a2ml files MUST exist in `.machine_readable/` directory ONLY:
+These 6 a2ml files MUST exist in `.machine_readable/6a2/` directory ONLY:
 1. **STATE.a2ml** - Project state, progress, blockers
 2. **META.a2ml** - Architecture decisions, governance
 3. **ECOSYSTEM.a2ml** - Position in ecosystem, relationships
@@ -55,7 +63,7 @@ Policy enforcement contracts (k9, dust, lust, must, trust).
 ### AI Configuration & Guides: `.machine_readable/ai/` ONLY
 
 - `AI.a2ml` - Language-specific or LLM-specific patterns
-- `PLACEHOLDERS.md` - Bootstrap guide
+- `PLACEHOLDERS.adoc` - Bootstrap guide
 
 ### Community & Forge Metadata: `.github/` ONLY
 
@@ -80,42 +88,73 @@ Policy enforcement contracts (k9, dust, lust, must, trust).
 6. **Container images** - MUST use Chainguard base (`cgr.dev/chainguard/wolfi-base:latest` or `cgr.dev/chainguard/static:latest`)
 7. **Container runtime** - Podman, never Docker. Files are `Containerfile`, never `Dockerfile`
 8. **Container orchestration** - `selur-compose`, never `docker-compose`
+9. **Tier isolation** - Tier 1 capabilities NEVER write to the target database
+10. **Sidecar integrity** - Provenance hash chains are append-only and tamper-evident
+
+## VERISIMISER-SPECIFIC INVARIANTS
+
+- **Octad dimensions**: data, metadata, provenance, lineage, constraints, access-control, temporal, simulation
+- **Tier 1 (piggybacks)**: drift detection, provenance tracking, temporal versioning -- sidecar-only
+- **Tier 2 (overlays)**: graph, vector, tensor, semantic, document, spatial -- additional storage
+- **Supported backends**: PostgreSQL, SQLite, MongoDB, Redis (extensible)
+- **VQL-UT**: Type-safe query interface for octad queries
 
 ## REPOSITORY STRUCTURE
 
 This repo follows the **Dual-Track** architecture:
 
 ```
-[YOUR-REPO-NAME]/
+verisimiser/
 ├── 0-AI-MANIFEST.a2ml         # THIS FILE (start here)
 ├── README.adoc                 # High-level orientation (Rich Human)
 ├── ROADMAP.adoc                # Future direction
 ├── CONTRIBUTING.adoc           # Human contribution guide
-├── GOVERNANCE.adoc             # Decision-making model
 ├── Justfile                    # Task runner
 ├── Containerfile               # OCI build
-├── LICENSE                     # Primary license
+├── Cargo.toml                  # Rust build config
+├── LICENSE                     # Primary license (PMPL-1.0-or-later)
 ├── src/                        # Source code
+│   ├── main.rs                 # CLI entry point (clap subcommands)
+│   ├── lib.rs                  # Library root
+│   ├── manifest/               # TOML manifest parsing
+│   ├── tier1/                  # Tier 1 piggyback capabilities
+│   │   ├── drift.rs            # Cross-modal drift detection
+│   │   ├── provenance.rs       # SHA-256 hash-chain provenance
+│   │   └── temporal.rs         # Temporal versioning sidecar
+│   ├── tier2/                  # Tier 2 augmentation overlays
+│   ├── abi/                    # ABI module (Rust side)
+│   ├── intercept/              # Per-database interception strategies
 │   └── interface/              # Verified Interface Seams
 │       ├── abi/                # Idris2 ABI (The Spec)
+│       │   ├── Types.idr       # OctadDimension, DatabaseBackend, etc.
+│       │   ├── Layout.idr      # Octad record memory layout
+│       │   └── Foreign.idr     # Database connection, overlay, VQL-UT FFI
 │       ├── ffi/                # Zig FFI (The Bridge)
+│       │   ├── build.zig
+│       │   ├── src/main.zig
+│       │   └── test/integration_test.zig
 │       └── generated/          # C Headers (The Result)
 ├── container/                  # Stapeln container ecosystem
 ├── docs/                       # Technical depths
 │   ├── attribution/            # Citations, owners, maintainers (adoc)
-│   ├── architecture/           # Topology, diagrams
+│   ├── architecture/           # Topology, diagrams, threat model
 │   ├── theory/                 # Domain theory
-│   └── practice/               # Manuals
-├── docs/legal/                  # Legal exhibits and full texts
+│   └── legal/                  # Legal exhibits and full texts
 └── .machine_readable/          # ALL machine-readable metadata
+    └── 6a2/                    # STATE, META, ECOSYSTEM, AGENTIC, NEUROSYM, PLAYBOOK
 ```
 
 ## SESSION STARTUP CHECKLIST
 
-✅ Read THIS file (0-AI-MANIFEST.a2ml) first
-✅ Understand canonical location: `.machine_readable/`
-✅ State understanding of canonical locations
+1. Read THIS file (0-AI-MANIFEST.a2ml) first
+2. Understand canonical location: `.machine_readable/`
+3. State understanding of canonical locations
+4. Read `.machine_readable/6a2/STATE.a2ml` for current project state
 
 ## ATTESTATION PROOF
 
-**"I have read the AI manifest. All machine-readable content (state files, anchors, policies, bot directives, contractiles, AI guides) is located in `.machine_readable/` ONLY, and community metadata is in `.github/`. I will not create duplicate files in the root directory."**
+**"I have read the AI manifest for verisimiser. All machine-readable content
+(state files, anchors, policies, bot directives, contractiles, AI guides) is
+located in `.machine_readable/` ONLY, and community metadata is in `.github/`.
+I will not create duplicate files in the root directory. Tier 1 capabilities
+never write to the target database."**

@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
-# NEUROSYM.a2ml — Neurosymbolic integration metadata
+# NEUROSYM.a2ml — Neurosymbolic integration metadata for verisimiser
 # Configuration for Hypatia scanning and symbolic reasoning.
 
 [metadata]
 version = "0.1.0"
-last-updated = "{{CURRENT_DATE}}"
+last-updated = "2026-03-21"
+project = "verisimiser"
 
 [hypatia-config]
 scan-enabled = true
@@ -14,10 +15,20 @@ scan-depth = "standard"  # quick | standard | deep
 report-format = "logtalk"
 
 [symbolic-rules]
-# Custom symbolic rules for this project
-# - { name = "no-unsafe-ffi", pattern = "believe_me|unsafeCoerce", severity = "critical" }
+# Custom symbolic rules for verisimiser:
+# - Provenance hash chains must be append-only
+# - Tier 1 operations must never write to the target database
+# - Drift detection must be read-path only (no mutation)
+# - OctadDimension enum must always have exactly 8 variants
+# - DriftCategory enum must always have exactly 8 variants
+rules = [
+  { name = "no-unsafe-ffi", pattern = "believe_me|unsafeCoerce|assert_total|Admitted|sorry", severity = "critical" },
+  { name = "tier1-sidecar-isolation", pattern = "target_db.*write|target_db.*insert|target_db.*update|target_db.*delete", severity = "critical" },
+  { name = "octad-completeness", pattern = "OctadDimension", check = "exactly-8-variants", severity = "high" },
+  { name = "drift-completeness", pattern = "DriftCategory", check = "exactly-8-variants", severity = "high" },
+]
 
 [neural-config]
 # Neural pattern detection settings
-# confidence-threshold = 0.85
+confidence-threshold = 0.85
 # model = "hypatia-v2"

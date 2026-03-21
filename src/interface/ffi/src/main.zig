@@ -1,15 +1,19 @@
-// {{PROJECT}} FFI Implementation
+// VeriSimiser FFI Implementation
 //
-// This module implements the C-compatible FFI declared in src/abi/Foreign.idr
-// All types and layouts must match the Idris2 ABI definitions.
+// Implements the C-compatible FFI declared in src/interface/abi/Foreign.idr.
+// VeriSimiser augments existing databases with VeriSimDB octad capabilities:
+// drift detection, provenance tracking, temporal versioning, and modality overlays.
+//
+// All types and layouts must match the Idris2 ABI definitions in Types.idr and Layout.idr.
 //
 // SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 
 const std = @import("std");
 
-// Version information (keep in sync with project)
+// Version information (keep in sync with Cargo.toml)
 const VERSION = "0.1.0";
-const BUILD_INFO = "{{PROJECT}} built with Zig " ++ @import("builtin").zig_version_string;
+const BUILD_INFO = "VeriSimiser built with Zig " ++ @import("builtin").zig_version_string;
 
 /// Thread-local error storage
 threadlocal var last_error: ?[]const u8 = null;
@@ -25,7 +29,7 @@ fn clearError() void {
 }
 
 //==============================================================================
-// Core Types (must match src/abi/Types.idr)
+// Core Types (must match src/interface/abi/Types.idr)
 //==============================================================================
 
 /// Result codes (must match Idris2 Result type)
@@ -35,94 +39,457 @@ pub const Result = enum(c_int) {
     invalid_param = 2,
     out_of_memory = 3,
     null_pointer = 4,
+    connection_failed = 5,
+    chain_corrupted = 6,
+    sidecar_unavailable = 7,
 };
 
-/// Library handle (opaque to prevent direct access)
-pub const Handle = opaque {
-    // Internal state hidden from C
+/// Octad dimension tags (must match Idris2 OctadDimension type)
+pub const OctadDimension = enum(u32) {
+    data = 0,
+    metadata = 1,
+    provenance = 2,
+    lineage = 3,
+    constraints = 4,
+    access_control = 5,
+    temporal = 6,
+    simulation = 7,
+};
+
+/// Database backend identifiers (must match Idris2 DatabaseBackend type)
+pub const DatabaseBackend = enum(u32) {
+    postgresql = 0,
+    sqlite = 1,
+    mongodb = 2,
+    redis = 3,
+    mysql = 4,
+};
+
+/// Provenance operations (must match Idris2 ProvenanceOperation type)
+pub const ProvenanceOperation = enum(u32) {
+    create = 0,
+    update = 1,
+    delete = 2,
+    transform = 3,
+};
+
+/// Drift categories (must match Idris2 DriftCategory type)
+pub const DriftCategory = enum(u32) {
+    structural = 0,
+    semantic = 1,
+    temporal = 2,
+    statistical = 3,
+    referential = 4,
+    provenance = 5,
+    spatial = 6,
+    embedding = 7,
+};
+
+/// Bitmask of active octad dimensions for an entity.
+pub const DimensionMask = u32;
+
+/// VeriSimiser library handle (opaque to C callers).
+/// Holds the augmentation state, sidecar connections, and configuration.
+pub const Handle = extern struct {
     allocator: std.mem.Allocator,
     initialized: bool,
-    // Add your fields here
+    backend: DatabaseBackend,
+    db_connected: bool,
+    // Sidecar handles (null if not enabled)
+    provenance_enabled: bool,
+    temporal_enabled: bool,
+    drift_enabled: bool,
+};
+
+/// Database connection handle (opaque to C callers).
+pub const DbConnection = extern struct {
+    allocator: std.mem.Allocator,
+    backend: DatabaseBackend,
+    connected: bool,
 };
 
 //==============================================================================
 // Library Lifecycle
 //==============================================================================
 
-/// Initialize the library
-/// Returns a handle, or null on failure
-export fn {{project}}_init() ?*Handle {
+/// Initialise the VeriSimiser library.
+/// Returns a handle, or null on failure.
+export fn verisimiser_init() ?*Handle {
     const allocator = std.heap.c_allocator;
 
     const handle = allocator.create(Handle) catch {
-        setError("Failed to allocate handle");
+        setError("Failed to allocate VeriSimiser handle");
         return null;
     };
 
-    // Initialize handle
     handle.* = .{
         .allocator = allocator,
         .initialized = true,
+        .backend = .postgresql, // default backend
+        .db_connected = false,
+        .provenance_enabled = false,
+        .temporal_enabled = false,
+        .drift_enabled = false,
     };
 
     clearError();
     return handle;
 }
 
-/// Free the library handle
-export fn {{project}}_free(handle: ?*Handle) void {
+/// Free the VeriSimiser handle and all associated resources.
+export fn verisimiser_free(handle: ?*Handle) void {
     const h = handle orelse return;
     const allocator = h.allocator;
 
-    // Clean up resources
     h.initialized = false;
+    h.db_connected = false;
 
     allocator.destroy(h);
     clearError();
 }
 
 //==============================================================================
-// Core Operations
+// Database Connection
 //==============================================================================
 
-/// Process data (example operation)
-export fn {{project}}_process(handle: ?*Handle, input: u32) Result {
+/// Connect to a target database backend.
+/// backend_id: DatabaseBackend enum value.
+/// conn_str_ptr: pointer to null-terminated connection string.
+export fn verisimiser_connect(
+    handle: ?*Handle,
+    backend_id: u32,
+    conn_str_ptr: u64,
+) u64 {
     const h = handle orelse {
-        setError("Null handle");
+        setError("Null VeriSimiser handle");
+        return 0;
+    };
+
+    if (!h.initialized) {
+        setError("VeriSimiser handle not initialized");
+        return 0;
+    }
+
+    _ = conn_str_ptr; // TODO: parse connection string
+
+    const allocator = h.allocator;
+    const db = allocator.create(DbConnection) catch {
+        setError("Failed to allocate database connection");
+        return 0;
+    };
+
+    const backend = std.meta.intToEnum(DatabaseBackend, backend_id) catch {
+        setError("Invalid database backend");
+        allocator.destroy(db);
+        return 0;
+    };
+
+    db.* = .{
+        .allocator = allocator,
+        .backend = backend,
+        .connected = true,
+    };
+
+    h.backend = backend;
+    h.db_connected = true;
+
+    clearError();
+    return @intFromPtr(db);
+}
+
+/// Disconnect from the target database.
+export fn verisimiser_disconnect(handle: ?*Handle, db_ptr: u64) void {
+    const h = handle orelse return;
+    if (!h.initialized) return;
+
+    if (db_ptr != 0) {
+        const db: *DbConnection = @ptrFromInt(db_ptr);
+        db.connected = false;
+        db.allocator.destroy(db);
+        h.db_connected = false;
+    }
+    clearError();
+}
+
+//==============================================================================
+// Octad Overlay Operations
+//==============================================================================
+
+/// Enable an octad dimension for an entity.
+export fn verisimiser_enable_dimension(
+    handle: ?*Handle,
+    entity_id: u64,
+    dimension: u32,
+) Result {
+    const h = handle orelse {
+        setError("Null VeriSimiser handle");
         return .null_pointer;
     };
 
     if (!h.initialized) {
-        setError("Handle not initialized");
+        setError("VeriSimiser handle not initialized");
         return .@"error";
     }
 
-    // Example processing logic
-    _ = input;
+    _ = entity_id;
+
+    // Validate dimension enum
+    _ = std.meta.intToEnum(OctadDimension, dimension) catch {
+        setError("Invalid octad dimension");
+        return .invalid_param;
+    };
+
+    // TODO: actually enable the dimension in the overlay index
 
     clearError();
     return .ok;
+}
+
+/// Get the active dimension bitmask for an entity.
+export fn verisimiser_get_active_dimensions(
+    handle: ?*Handle,
+    entity_id: u64,
+) u32 {
+    const h = handle orelse return 0;
+    if (!h.initialized) return 0;
+    _ = entity_id;
+
+    // TODO: look up the entity's active dimensions from the overlay index
+    // Return bitmask: bit 0 = Data, bit 1 = Metadata, etc.
+    return 0;
+}
+
+//==============================================================================
+// Tier 1: Provenance Tracking
+//==============================================================================
+
+/// Record a provenance event (appends to SHA-256 hash chain).
+export fn verisimiser_record_provenance(
+    handle: ?*Handle,
+    entity_id: u64,
+    operation: u32,
+    actor_ptr: u64,
+) Result {
+    const h = handle orelse {
+        setError("Null VeriSimiser handle");
+        return .null_pointer;
+    };
+
+    if (!h.initialized) {
+        setError("VeriSimiser handle not initialized");
+        return .@"error";
+    }
+
+    _ = entity_id;
+    _ = actor_ptr;
+
+    // Validate operation enum
+    _ = std.meta.intToEnum(ProvenanceOperation, operation) catch {
+        setError("Invalid provenance operation");
+        return .invalid_param;
+    };
+
+    // TODO: compute SHA-256 hash, chain from previous, write to sidecar
+
+    clearError();
+    return .ok;
+}
+
+/// Verify the integrity of an entity's provenance hash chain.
+export fn verisimiser_verify_provenance(
+    handle: ?*Handle,
+    entity_id: u64,
+) Result {
+    const h = handle orelse {
+        setError("Null VeriSimiser handle");
+        return .null_pointer;
+    };
+
+    if (!h.initialized) {
+        setError("VeriSimiser handle not initialized");
+        return .@"error";
+    }
+
+    _ = entity_id;
+
+    // TODO: walk the hash chain, verify each link
+    // Return .chain_corrupted if any link fails verification
+
+    clearError();
+    return .ok;
+}
+
+/// Get the length of an entity's provenance chain.
+export fn verisimiser_provenance_length(
+    handle: ?*Handle,
+    entity_id: u64,
+) u64 {
+    const h = handle orelse return 0;
+    if (!h.initialized) return 0;
+    _ = entity_id;
+
+    // TODO: count provenance entries for entity
+    return 0;
+}
+
+//==============================================================================
+// Tier 1: Temporal Versioning
+//==============================================================================
+
+/// Record a temporal snapshot for an entity.
+export fn verisimiser_record_version(
+    handle: ?*Handle,
+    entity_id: u64,
+    snapshot_ptr: u64,
+    snapshot_len: u32,
+) Result {
+    const h = handle orelse {
+        setError("Null VeriSimiser handle");
+        return .null_pointer;
+    };
+
+    if (!h.initialized) {
+        setError("VeriSimiser handle not initialized");
+        return .@"error";
+    }
+
+    _ = entity_id;
+    _ = snapshot_ptr;
+    _ = snapshot_len;
+
+    // TODO: store snapshot in temporal sidecar with current timestamp
+
+    clearError();
+    return .ok;
+}
+
+/// Query entity state at a specific point in time.
+/// Returns pointer to serialised snapshot, or 0 if not found.
+export fn verisimiser_query_at_time(
+    handle: ?*Handle,
+    entity_id: u64,
+    timestamp: u64,
+) u64 {
+    const h = handle orelse return 0;
+    if (!h.initialized) return 0;
+    _ = entity_id;
+    _ = timestamp;
+
+    // TODO: binary search temporal sidecar for version valid at timestamp
+    return 0;
+}
+
+/// Get the current version number for an entity.
+export fn verisimiser_current_version(
+    handle: ?*Handle,
+    entity_id: u64,
+) u64 {
+    const h = handle orelse return 0;
+    if (!h.initialized) return 0;
+    _ = entity_id;
+
+    // TODO: look up latest version number
+    return 0;
+}
+
+//==============================================================================
+// Tier 1: Drift Detection
+//==============================================================================
+
+/// Measure cross-modal drift for an entity.
+/// Returns pointer to DriftMeasurement struct, or 0 if entity not found.
+export fn verisimiser_measure_drift(
+    handle: ?*Handle,
+    entity_id: u64,
+) u64 {
+    const h = handle orelse return 0;
+    if (!h.initialized) return 0;
+    _ = entity_id;
+
+    // TODO: compute drift scores across all 8 categories
+    return 0;
+}
+
+/// Get the overall drift score for an entity (0.0 = consistent, 1.0 = diverged).
+export fn verisimiser_drift_score(
+    handle: ?*Handle,
+    entity_id: u64,
+) f64 {
+    const h = handle orelse return 0.0;
+    if (!h.initialized) return 0.0;
+    _ = entity_id;
+
+    // TODO: compute aggregate drift score
+    return 0.0;
+}
+
+/// Get drift score for a specific category.
+export fn verisimiser_drift_category_score(
+    handle: ?*Handle,
+    entity_id: u64,
+    category: u32,
+) f64 {
+    const h = handle orelse return 0.0;
+    if (!h.initialized) return 0.0;
+    _ = entity_id;
+    _ = category;
+
+    // TODO: look up per-category drift score
+    return 0.0;
+}
+
+//==============================================================================
+// VQL-UT Query Interface
+//==============================================================================
+
+/// Execute a VQL-UT query against the augmented database.
+/// query_ptr: pointer to null-terminated VQL-UT query string.
+/// Returns pointer to result set, or 0 on failure.
+export fn verisimiser_vql_query(
+    handle: ?*Handle,
+    query_ptr: u64,
+) u64 {
+    const h = handle orelse {
+        setError("Null VeriSimiser handle");
+        return 0;
+    };
+
+    if (!h.initialized) {
+        setError("VeriSimiser handle not initialized");
+        return 0;
+    }
+
+    _ = query_ptr;
+
+    // TODO: parse VQL-UT query, plan execution, return result set
+    return 0;
+}
+
+/// Free a VQL-UT query result set.
+export fn verisimiser_vql_free_result(result_ptr: u64) void {
+    if (result_ptr == 0) return;
+    // TODO: free result set memory
+    _ = result_ptr;
 }
 
 //==============================================================================
 // String Operations
 //==============================================================================
 
-/// Get a string result (example)
-/// Caller must free the returned string
-export fn {{project}}_get_string(handle: ?*Handle) ?[*:0]const u8 {
+/// Get a string result from VeriSimiser.
+/// Caller must free the returned string with verisimiser_free_string.
+export fn verisimiser_get_string(handle: ?*Handle) ?[*:0]const u8 {
     const h = handle orelse {
-        setError("Null handle");
+        setError("Null VeriSimiser handle");
         return null;
     };
 
     if (!h.initialized) {
-        setError("Handle not initialized");
+        setError("VeriSimiser handle not initialized");
         return null;
     }
 
-    // Example: allocate and return a string
-    const result = h.allocator.dupeZ(u8, "Example result") catch {
+    const result = h.allocator.dupeZ(u8, "VeriSimiser octad augmentation active") catch {
         setError("Failed to allocate string");
         return null;
     };
@@ -131,8 +498,8 @@ export fn {{project}}_get_string(handle: ?*Handle) ?[*:0]const u8 {
     return result.ptr;
 }
 
-/// Free a string allocated by the library
-export fn {{project}}_free_string(str: ?[*:0]const u8) void {
+/// Free a string allocated by VeriSimiser.
+export fn verisimiser_free_string(str: ?[*:0]const u8) void {
     const s = str orelse return;
     const allocator = std.heap.c_allocator;
 
@@ -141,50 +508,14 @@ export fn {{project}}_free_string(str: ?[*:0]const u8) void {
 }
 
 //==============================================================================
-// Array/Buffer Operations
-//==============================================================================
-
-/// Process an array of data
-export fn {{project}}_process_array(
-    handle: ?*Handle,
-    buffer: ?[*]const u8,
-    len: u32,
-) Result {
-    const h = handle orelse {
-        setError("Null handle");
-        return .null_pointer;
-    };
-
-    const buf = buffer orelse {
-        setError("Null buffer");
-        return .null_pointer;
-    };
-
-    if (!h.initialized) {
-        setError("Handle not initialized");
-        return .@"error";
-    }
-
-    // Access the buffer
-    const data = buf[0..len];
-    _ = data;
-
-    // Process data here
-
-    clearError();
-    return .ok;
-}
-
-//==============================================================================
 // Error Handling
 //==============================================================================
 
-/// Get the last error message
-/// Returns null if no error
-export fn {{project}}_last_error() ?[*:0]const u8 {
+/// Get the last error message.
+/// Returns null if no error.
+export fn verisimiser_last_error() ?[*:0]const u8 {
     const err = last_error orelse return null;
 
-    // Return C string (static storage, no need to free)
     const allocator = std.heap.c_allocator;
     const c_str = allocator.dupeZ(u8, err) catch return null;
     return c_str.ptr;
@@ -194,58 +525,31 @@ export fn {{project}}_last_error() ?[*:0]const u8 {
 // Version Information
 //==============================================================================
 
-/// Get the library version
-export fn {{project}}_version() [*:0]const u8 {
+/// Get the VeriSimiser library version.
+export fn verisimiser_version() [*:0]const u8 {
     return VERSION.ptr;
 }
 
-/// Get build information
-export fn {{project}}_build_info() [*:0]const u8 {
+/// Get build information.
+export fn verisimiser_build_info() [*:0]const u8 {
     return BUILD_INFO.ptr;
-}
-
-//==============================================================================
-// Callback Support
-//==============================================================================
-
-/// Callback function type (C ABI)
-pub const Callback = *const fn (u64, u32) callconv(.C) u32;
-
-/// Register a callback
-export fn {{project}}_register_callback(
-    handle: ?*Handle,
-    callback: ?Callback,
-) Result {
-    const h = handle orelse {
-        setError("Null handle");
-        return .null_pointer;
-    };
-
-    const cb = callback orelse {
-        setError("Null callback");
-        return .null_pointer;
-    };
-
-    if (!h.initialized) {
-        setError("Handle not initialized");
-        return .@"error";
-    }
-
-    // Store callback for later use
-    _ = cb;
-
-    clearError();
-    return .ok;
 }
 
 //==============================================================================
 // Utility Functions
 //==============================================================================
 
-/// Check if handle is initialized
-export fn {{project}}_is_initialized(handle: ?*Handle) u32 {
+/// Check if VeriSimiser handle is initialised.
+export fn verisimiser_is_initialized(handle: ?*Handle) u32 {
     const h = handle orelse return 0;
     return if (h.initialized) 1 else 0;
+}
+
+/// Check if a database backend is supported.
+export fn verisimiser_backend_supported(backend_id: u32) u32 {
+    // All defined backends are supported
+    _ = std.meta.intToEnum(DatabaseBackend, backend_id) catch return 0;
+    return 1;
 }
 
 //==============================================================================
@@ -253,22 +557,54 @@ export fn {{project}}_is_initialized(handle: ?*Handle) u32 {
 //==============================================================================
 
 test "lifecycle" {
-    const handle = {{project}}_init() orelse return error.InitFailed;
-    defer {{project}}_free(handle);
+    const handle = verisimiser_init() orelse return error.InitFailed;
+    defer verisimiser_free(handle);
 
-    try std.testing.expect({{project}}_is_initialized(handle) == 1);
+    try std.testing.expect(verisimiser_is_initialized(handle) == 1);
 }
 
 test "error handling" {
-    const result = {{project}}_process(null, 0);
+    const result = verisimiser_record_provenance(null, 0, 0, 0);
     try std.testing.expectEqual(Result.null_pointer, result);
 
-    const err = {{project}}_last_error();
+    const err = verisimiser_last_error();
     try std.testing.expect(err != null);
 }
 
 test "version" {
-    const ver = {{project}}_version();
+    const ver = verisimiser_version();
     const ver_str = std.mem.span(ver);
     try std.testing.expectEqualStrings(VERSION, ver_str);
+}
+
+test "backend supported" {
+    // PostgreSQL
+    try std.testing.expectEqual(@as(u32, 1), verisimiser_backend_supported(0));
+    // SQLite
+    try std.testing.expectEqual(@as(u32, 1), verisimiser_backend_supported(1));
+    // Invalid
+    try std.testing.expectEqual(@as(u32, 0), verisimiser_backend_supported(99));
+}
+
+test "provenance with null handle" {
+    const result = verisimiser_record_provenance(null, 42, 0, 0);
+    try std.testing.expectEqual(Result.null_pointer, result);
+}
+
+test "verify provenance with null handle" {
+    const result = verisimiser_verify_provenance(null, 42);
+    try std.testing.expectEqual(Result.null_pointer, result);
+}
+
+test "drift score with null handle" {
+    const score = verisimiser_drift_score(null, 42);
+    try std.testing.expectEqual(@as(f64, 0.0), score);
+}
+
+test "enable dimension with invalid dimension" {
+    const handle = verisimiser_init() orelse return error.InitFailed;
+    defer verisimiser_free(handle);
+
+    const result = verisimiser_enable_dimension(handle, 42, 99);
+    try std.testing.expectEqual(Result.invalid_param, result);
 }
