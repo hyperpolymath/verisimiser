@@ -116,11 +116,7 @@ fn generate_table_interceptor(
 /// For single-column PKs: just CAST the column to TEXT.
 /// For composite PKs: concatenate with '::' separator.
 /// If no PK is defined, use ROWID (SQLite) or ctid (PostgreSQL).
-fn build_entity_id_expr(
-    pk_columns: &[&str],
-    table_name: &str,
-    backend: DatabaseBackend,
-) -> String {
+fn build_entity_id_expr(pk_columns: &[&str], table_name: &str, backend: DatabaseBackend) -> String {
     if pk_columns.is_empty() {
         // No PK defined — fall back to internal row identifier.
         match backend {
@@ -349,8 +345,7 @@ mod tests {
             enable_access_control: true,
             enable_simulation: false,
         };
-        let interceptors =
-            generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
+        let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
         assert_eq!(interceptors.len(), 1);
         let interceptor = &interceptors[0];
@@ -371,8 +366,7 @@ mod tests {
             enable_access_control: false,
             enable_simulation: false,
         };
-        let interceptors =
-            generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
+        let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
         assert_eq!(interceptors.len(), 1);
         let interceptor = &interceptors[0];
@@ -392,8 +386,7 @@ mod tests {
             enable_access_control: false,
             enable_simulation: false,
         };
-        let interceptors =
-            generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
+        let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
         let view = interceptors[0].provenance_view.as_ref().unwrap();
         assert!(view.contains("verisimdb_posts_with_provenance"));
@@ -412,8 +405,7 @@ mod tests {
             enable_access_control: false,
             enable_simulation: false,
         };
-        let interceptors =
-            generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
+        let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
         let view = interceptors[0].temporal_view.as_ref().unwrap();
         assert!(view.contains("verisimdb_posts_with_temporal"));
@@ -425,8 +417,7 @@ mod tests {
     fn test_render_interceptors_produces_sql() {
         let schema = test_schema();
         let octad = OctadConfig::default();
-        let interceptors =
-            generate_interceptors(&schema, &octad, DatabaseBackend::PostgreSQL);
+        let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::PostgreSQL);
         let rendered = render_interceptors(&interceptors);
 
         assert!(rendered.contains("SPDX-License-Identifier"));
@@ -435,11 +426,8 @@ mod tests {
 
     #[test]
     fn test_entity_id_expr_composite_pk() {
-        let expr = build_entity_id_expr(
-            &["post_id", "tag_id"],
-            "post_tags",
-            DatabaseBackend::SQLite,
-        );
+        let expr =
+            build_entity_id_expr(&["post_id", "tag_id"], "post_tags", DatabaseBackend::SQLite);
         assert!(expr.contains("post_tags.post_id"));
         assert!(expr.contains("post_tags.tag_id"));
         assert!(expr.contains("'::'"));

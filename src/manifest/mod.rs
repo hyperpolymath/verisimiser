@@ -32,7 +32,6 @@ pub struct Manifest {
     pub sidecar: SidecarConfig,
 
     // --- Legacy fields for backward compatibility ---
-
     /// Legacy top-level [verisimiser] section.
     #[serde(default)]
     pub verisimiser: VeriSimiserConfig,
@@ -171,13 +170,25 @@ impl OctadConfig {
     /// Returns the count of enabled octad dimensions (always includes data + metadata = 2).
     pub fn enabled_count(&self) -> usize {
         let mut count = 2; // data + metadata are always present
-        if self.enable_provenance { count += 1; }
-        if self.enable_lineage { count += 1; }
-        if self.enable_temporal { count += 1; }
-        if self.enable_access_control { count += 1; }
-        if self.enable_simulation { count += 1; }
+        if self.enable_provenance {
+            count += 1;
+        }
+        if self.enable_lineage {
+            count += 1;
+        }
+        if self.enable_temporal {
+            count += 1;
+        }
+        if self.enable_access_control {
+            count += 1;
+        }
+        if self.enable_simulation {
+            count += 1;
+        }
         // constraints is implied when any other dimension is enabled
-        if count > 2 { count += 1; } // constraints
+        if count > 2 {
+            count += 1;
+        } // constraints
         count
     }
 }
@@ -255,12 +266,24 @@ pub struct Tier2Config {
 
 // --- Default value functions ---
 
-fn default_true() -> bool { true }
-fn default_version() -> String { "0.1.0".to_string() }
-fn default_backend() -> String { "postgresql".to_string() }
-fn default_connection_env() -> String { "DATABASE_URL".to_string() }
-fn default_sidecar_storage() -> String { "sqlite".to_string() }
-fn default_sidecar_path() -> String { ".verisimdb/sidecar.db".to_string() }
+fn default_true() -> bool {
+    true
+}
+fn default_version() -> String {
+    "0.1.0".to_string()
+}
+fn default_backend() -> String {
+    "postgresql".to_string()
+}
+fn default_connection_env() -> String {
+    "DATABASE_URL".to_string()
+}
+fn default_sidecar_storage() -> String {
+    "sqlite".to_string()
+}
+fn default_sidecar_path() -> String {
+    ".verisimdb/sidecar.db".to_string()
+}
 
 // --- Public API ---
 
@@ -270,8 +293,7 @@ fn default_sidecar_path() -> String { ".verisimdb/sidecar.db".to_string() }
 pub fn load_manifest(path: &str) -> Result<Manifest> {
     let contents = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read manifest: {}", path))?;
-    toml::from_str(&contents)
-        .with_context(|| format!("Failed to parse manifest: {}", path))
+    toml::from_str(&contents).with_context(|| format!("Failed to parse manifest: {}", path))
 }
 
 /// Generate a new `verisimiser.toml` manifest file with the Phase 1 schema.
@@ -284,7 +306,11 @@ pub fn init_manifest(database: &str) -> Result<()> {
         anyhow::bail!("{} already exists — remove it first to reinitialise", path);
     }
 
-    let enable_simulation = if database == "sqlite" { "false" } else { "false" };
+    let enable_simulation = if database == "sqlite" {
+        "false"
+    } else {
+        "false"
+    };
 
     let template = format!(
         r#"# SPDX-License-Identifier: PMPL-1.0-or-later
@@ -330,34 +356,64 @@ pub fn print_status(manifest: &Manifest) {
 
     println!("=== VeriSimiser: {} ===", name);
     println!("Backend: {}", backend);
-    println!("Sidecar: {} ({})", manifest.sidecar.path, manifest.sidecar.storage);
+    println!(
+        "Sidecar: {} ({})",
+        manifest.sidecar.path, manifest.sidecar.storage
+    );
     println!();
 
-    println!("Octad Dimensions ({}/8 enabled):", manifest.octad.enabled_count());
+    println!(
+        "Octad Dimensions ({}/8 enabled):",
+        manifest.octad.enabled_count()
+    );
     println!("  Data:           ALWAYS ON (your database)");
     println!("  Metadata:       ALWAYS ON (schema introspection)");
     println!(
         "  Provenance:     {}",
-        if manifest.octad.enable_provenance { "ON" } else { "off" }
+        if manifest.octad.enable_provenance {
+            "ON"
+        } else {
+            "off"
+        }
     );
     println!(
         "  Lineage:        {}",
-        if manifest.octad.enable_lineage { "ON" } else { "off" }
+        if manifest.octad.enable_lineage {
+            "ON"
+        } else {
+            "off"
+        }
     );
     println!(
         "  Constraints:    {}",
-        if manifest.octad.enabled_count() > 2 { "ON" } else { "off" }
+        if manifest.octad.enabled_count() > 2 {
+            "ON"
+        } else {
+            "off"
+        }
     );
     println!(
         "  Access Control: {}",
-        if manifest.octad.enable_access_control { "ON" } else { "off" }
+        if manifest.octad.enable_access_control {
+            "ON"
+        } else {
+            "off"
+        }
     );
     println!(
         "  Temporal:       {}",
-        if manifest.octad.enable_temporal { "ON" } else { "off" }
+        if manifest.octad.enable_temporal {
+            "ON"
+        } else {
+            "off"
+        }
     );
     println!(
         "  Simulation:     {}",
-        if manifest.octad.enable_simulation { "ON" } else { "off" }
+        if manifest.octad.enable_simulation {
+            "ON"
+        } else {
+            "off"
+        }
     );
 }

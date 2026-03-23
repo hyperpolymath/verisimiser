@@ -53,9 +53,21 @@ fn test_full_pipeline_blog_schema() {
     assert_eq!(schema.tables[2].name, "comments");
 
     // Verify column counts.
-    assert_eq!(schema.tables[0].columns.len(), 4, "users should have 4 columns");
-    assert_eq!(schema.tables[1].columns.len(), 6, "posts should have 6 columns");
-    assert_eq!(schema.tables[2].columns.len(), 5, "comments should have 5 columns");
+    assert_eq!(
+        schema.tables[0].columns.len(),
+        4,
+        "users should have 4 columns"
+    );
+    assert_eq!(
+        schema.tables[1].columns.len(),
+        6,
+        "posts should have 6 columns"
+    );
+    assert_eq!(
+        schema.tables[2].columns.len(),
+        5,
+        "comments should have 5 columns"
+    );
 
     // Step 2: Generate sidecar overlay with all dimensions enabled.
     let octad = OctadConfig {
@@ -90,13 +102,21 @@ fn test_full_pipeline_blog_schema() {
     );
 
     // Verify metadata seeds reference all 3 tables.
-    assert!(overlay_ddl.contains("'users'"), "Metadata should reference users");
-    assert!(overlay_ddl.contains("'posts'"), "Metadata should reference posts");
-    assert!(overlay_ddl.contains("'comments'"), "Metadata should reference comments");
+    assert!(
+        overlay_ddl.contains("'users'"),
+        "Metadata should reference users"
+    );
+    assert!(
+        overlay_ddl.contains("'posts'"),
+        "Metadata should reference posts"
+    );
+    assert!(
+        overlay_ddl.contains("'comments'"),
+        "Metadata should reference comments"
+    );
 
     // Step 3: Generate query interceptors.
-    let interceptors =
-        query::generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
+    let interceptors = query::generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
     assert_eq!(
         interceptors.len(),
         3,
@@ -321,7 +341,10 @@ fn test_octad_dimensions_enumeration() {
 
     // Check Display implementation.
     assert_eq!(format!("{}", OctadDimension::Provenance), "Provenance");
-    assert_eq!(format!("{}", OctadDimension::AccessControl), "Access Control");
+    assert_eq!(
+        format!("{}", OctadDimension::AccessControl),
+        "Access Control"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -442,14 +465,12 @@ path = ".verisimdb/test.db"
     }
 
     // Load the manifest.
-    let manifest =
-        manifest::load_manifest(manifest_path.to_str().unwrap()).unwrap();
+    let manifest = manifest::load_manifest(manifest_path.to_str().unwrap()).unwrap();
     assert_eq!(manifest.project.name, "test-articles");
     assert_eq!(manifest.database.backend, "sqlite");
 
     // Parse the schema from file.
-    let schema =
-        parser::parse_schema_file(schema_path.to_str().unwrap()).unwrap();
+    let schema = parser::parse_schema_file(schema_path.to_str().unwrap()).unwrap();
     assert_eq!(schema.tables.len(), 1);
     assert_eq!(schema.tables[0].name, "articles");
 
@@ -467,11 +488,8 @@ path = ".verisimdb/test.db"
     );
 
     // Generate interceptors.
-    let interceptors = query::generate_interceptors(
-        &schema,
-        &manifest.octad,
-        DatabaseBackend::SQLite,
-    );
+    let interceptors =
+        query::generate_interceptors(&schema, &manifest.octad, DatabaseBackend::SQLite);
     assert_eq!(interceptors.len(), 1);
     assert!(interceptors[0].provenance_view.is_some());
     assert!(interceptors[0].temporal_view.is_some());

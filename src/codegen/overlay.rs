@@ -238,25 +238,23 @@ mod tests {
     /// Helper: create a minimal schema for testing.
     fn test_schema() -> ParsedSchema {
         ParsedSchema {
-            tables: vec![
-                TableDef {
-                    name: "posts".to_string(),
-                    columns: vec![
-                        ColumnDef {
-                            name: "id".to_string(),
-                            sql_type: "INTEGER".to_string(),
-                            is_primary_key: true,
-                            is_not_null: true,
-                        },
-                        ColumnDef {
-                            name: "title".to_string(),
-                            sql_type: "TEXT".to_string(),
-                            is_primary_key: false,
-                            is_not_null: true,
-                        },
-                    ],
-                },
-            ],
+            tables: vec![TableDef {
+                name: "posts".to_string(),
+                columns: vec![
+                    ColumnDef {
+                        name: "id".to_string(),
+                        sql_type: "INTEGER".to_string(),
+                        is_primary_key: true,
+                        is_not_null: true,
+                    },
+                    ColumnDef {
+                        name: "title".to_string(),
+                        sql_type: "TEXT".to_string(),
+                        is_primary_key: false,
+                        is_not_null: true,
+                    },
+                ],
+            }],
             source: None,
         }
     }

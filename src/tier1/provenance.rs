@@ -30,7 +30,12 @@ pub struct ProvenanceRecord {
 
 impl ProvenanceRecord {
     /// Compute the hash for this record, chaining from the previous hash.
-    pub fn compute_hash(previous_hash: &str, entity_id: &str, operation: &str, timestamp: &str) -> String {
+    pub fn compute_hash(
+        previous_hash: &str,
+        entity_id: &str,
+        operation: &str,
+        timestamp: &str,
+    ) -> String {
         let mut hasher = Sha256::new();
         hasher.update(previous_hash.as_bytes());
         hasher.update(entity_id.as_bytes());

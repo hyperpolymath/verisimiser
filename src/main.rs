@@ -1,3 +1,17 @@
+#![allow(
+    dead_code,
+    clippy::too_many_arguments,
+    clippy::manual_strip,
+    clippy::if_same_then_else,
+    clippy::vec_init_then_push,
+    clippy::upper_case_acronyms,
+    clippy::format_in_format_args,
+    clippy::enum_variant_names,
+    clippy::module_inception,
+    clippy::doc_lazy_continuation,
+    clippy::manual_clamp,
+    clippy::type_complexity
+)]
 #![forbid(unsafe_code)]
 // SPDX-License-Identifier: PMPL-1.0-or-later
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
@@ -124,8 +138,7 @@ fn main() -> Result<()> {
             println!("Generated sidecar schema: {}", overlay_path);
 
             // Generate query interceptors.
-            let interceptors =
-                codegen::query::generate_interceptors(&schema, &m.octad, backend);
+            let interceptors = codegen::query::generate_interceptors(&schema, &m.octad, backend);
             let interceptor_sql = codegen::query::render_interceptors(&interceptors);
             let interceptor_path = format!("{}/interceptors.sql", output);
             std::fs::write(&interceptor_path, &interceptor_sql)?;
@@ -151,24 +164,18 @@ fn main() -> Result<()> {
                 "Starting VeriSimiser augmentation for {} ({})",
                 name, backend
             );
-            println!(
-                "  Octad: {}/8 dimensions enabled",
-                m.octad.enabled_count()
-            );
-            println!(
-                "  Sidecar: {} ({})",
-                m.sidecar.path, m.sidecar.storage
-            );
+            println!("  Octad: {}/8 dimensions enabled", m.octad.enabled_count());
+            println!("  Sidecar: {} ({})", m.sidecar.path, m.sidecar.storage);
             // TODO: start interception daemon
             Ok(())
         }
 
-        Commands::Drift { manifest, threshold } => {
+        Commands::Drift {
+            manifest,
+            threshold,
+        } => {
             let _m = manifest::load_manifest(&manifest)?;
-            println!(
-                "Checking cross-modal drift (threshold: {})...",
-                threshold
-            );
+            println!("Checking cross-modal drift (threshold: {})...", threshold);
             // TODO: query drift index
             Ok(())
         }
@@ -217,7 +224,12 @@ fn print_octad() {
         } else {
             ""
         };
-        println!("  {:15} {}{}", dim.label(), dimension_description(&dim), inherent);
+        println!(
+            "  {:15} {}{}",
+            dim.label(),
+            dimension_description(&dim),
+            inherent
+        );
     }
 }
 

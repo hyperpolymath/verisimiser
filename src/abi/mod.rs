@@ -106,6 +106,7 @@ impl DatabaseBackend {
     /// Parse a backend name from a string (case-insensitive).
     ///
     /// Returns `None` for unrecognised backend names.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(name: &str) -> Option<Self> {
         match name.to_lowercase().as_str() {
             "postgresql" | "postgres" | "pg" => Some(DatabaseBackend::PostgreSQL),
@@ -195,12 +196,7 @@ impl ProvenanceEntry {
     /// Create a new genesis entry (first in the chain for an entity).
     pub fn genesis(entity_id: &str, actor: &str) -> Self {
         let timestamp = Utc::now();
-        let hash = Self::compute_hash(
-            "",
-            entity_id,
-            "insert",
-            &timestamp.to_rfc3339(),
-        );
+        let hash = Self::compute_hash("", entity_id, "insert", &timestamp.to_rfc3339());
         Self {
             hash,
             previous_hash: String::new(),
@@ -264,11 +260,7 @@ pub struct LineageEdge {
 
 impl LineageEdge {
     /// Create a new lineage edge between two entities.
-    pub fn new(
-        source_entity: &str,
-        target_entity: &str,
-        derivation_type: &str,
-    ) -> Self {
+    pub fn new(source_entity: &str, target_entity: &str, derivation_type: &str) -> Self {
         let edge_id = format!(
             "{}->{}@{}",
             source_entity,
@@ -376,11 +368,7 @@ pub struct AccessPolicy {
 
 impl AccessPolicy {
     /// Create a new access policy for a table.
-    pub fn new(
-        target_table: &str,
-        principal: &str,
-        access_level: &str,
-    ) -> Self {
+    pub fn new(target_table: &str, principal: &str, access_level: &str) -> Self {
         let policy_id = format!(
             "pol-{}-{}-{}",
             target_table,
@@ -468,11 +456,26 @@ mod tests {
 
     #[test]
     fn test_database_backend_parsing() {
-        assert_eq!(DatabaseBackend::from_str("postgresql"), Some(DatabaseBackend::PostgreSQL));
-        assert_eq!(DatabaseBackend::from_str("postgres"), Some(DatabaseBackend::PostgreSQL));
-        assert_eq!(DatabaseBackend::from_str("pg"), Some(DatabaseBackend::PostgreSQL));
-        assert_eq!(DatabaseBackend::from_str("sqlite"), Some(DatabaseBackend::SQLite));
-        assert_eq!(DatabaseBackend::from_str("mongodb"), Some(DatabaseBackend::MongoDB));
+        assert_eq!(
+            DatabaseBackend::from_str("postgresql"),
+            Some(DatabaseBackend::PostgreSQL)
+        );
+        assert_eq!(
+            DatabaseBackend::from_str("postgres"),
+            Some(DatabaseBackend::PostgreSQL)
+        );
+        assert_eq!(
+            DatabaseBackend::from_str("pg"),
+            Some(DatabaseBackend::PostgreSQL)
+        );
+        assert_eq!(
+            DatabaseBackend::from_str("sqlite"),
+            Some(DatabaseBackend::SQLite)
+        );
+        assert_eq!(
+            DatabaseBackend::from_str("mongodb"),
+            Some(DatabaseBackend::MongoDB)
+        );
         assert_eq!(DatabaseBackend::from_str("mysql"), None);
     }
 

@@ -181,17 +181,17 @@ fn parse_create_table(statement: &str) -> Result<Option<TableDef>> {
 
         // Check for table-level PRIMARY KEY constraint.
         if upper_part.starts_with("PRIMARY KEY") {
-            if let Some(pk_start) = trimmed.find('(') {
-                if let Some(pk_end) = trimmed.rfind(')') {
-                    let pk_cols = &trimmed[pk_start + 1..pk_end];
-                    for col in pk_cols.split(',') {
-                        table_pk_columns.push(
-                            col.trim()
-                                .trim_matches('"')
-                                .trim_matches('`')
-                                .to_lowercase(),
-                        );
-                    }
+            if let Some(pk_start) = trimmed.find('(')
+                && let Some(pk_end) = trimmed.rfind(')')
+            {
+                let pk_cols = &trimmed[pk_start + 1..pk_end];
+                for col in pk_cols.split(',') {
+                    table_pk_columns.push(
+                        col.trim()
+                            .trim_matches('"')
+                            .trim_matches('`')
+                            .to_lowercase(),
+                    );
                 }
             }
             continue;
@@ -234,10 +234,7 @@ fn parse_column_def(definition: &str) -> Option<ColumnDef> {
         return None;
     }
 
-    let name = tokens[0]
-        .trim_matches('"')
-        .trim_matches('`')
-        .to_string();
+    let name = tokens[0].trim_matches('"').trim_matches('`').to_string();
 
     // The SQL type is the second token (possibly with parenthesised length).
     // We need to reconstruct it if it was split by whitespace inside parens.
@@ -246,8 +243,17 @@ fn parse_column_def(definition: &str) -> Option<ColumnDef> {
 
     // Extract the type: take tokens until we hit a constraint keyword.
     let constraint_keywords = [
-        "PRIMARY", "NOT", "NULL", "DEFAULT", "UNIQUE", "CHECK", "REFERENCES",
-        "AUTOINCREMENT", "AUTO_INCREMENT", "GENERATED", "SERIAL",
+        "PRIMARY",
+        "NOT",
+        "NULL",
+        "DEFAULT",
+        "UNIQUE",
+        "CHECK",
+        "REFERENCES",
+        "AUTOINCREMENT",
+        "AUTO_INCREMENT",
+        "GENERATED",
+        "SERIAL",
     ];
     let mut type_parts: Vec<&str> = Vec::new();
     for token in &tokens[1..] {
