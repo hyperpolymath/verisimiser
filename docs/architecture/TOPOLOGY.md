@@ -21,7 +21,7 @@ verisimiser/
 ├── Verified Interface (Idris2 ABI)
 │   ├── src/interface/abi/Types.idr     — OctadDimension, DatabaseBackend, DriftCategory, AccessPolicy, Tier, Result
 │   ├── src/interface/abi/Layout.idr    — OctadRecord (80B), ProvenanceEntry (88B), DriftMeasurement (88B), TemporalSnapshot (48B)
-│   └── src/interface/abi/Foreign.idr   — FFI declarations: lifecycle, connect, overlay, provenance, temporal, drift, VQL-UT
+│   └── src/interface/abi/Foreign.idr   — FFI declarations: lifecycle, connect, overlay, provenance, temporal, drift, VCL-total
 │
 ├── FFI Bridge (Zig)
 │   ├── src/interface/ffi/build.zig             — Shared/static lib build
@@ -48,7 +48,7 @@ Application → writes → Target Database (PostgreSQL / SQLite / MongoDB / Redi
             │               │               │
             └───────────────┼───────────────┘
                             │
-                    VQL-UT Query Interface
+                    VCL-total Query Interface
                             │
                     ┌───────┼───────┐
                     │       │       │

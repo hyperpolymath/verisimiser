@@ -204,15 +204,15 @@ test "drift score with valid handle returns initial value" {
 }
 
 //==============================================================================
-// VQL-UT Tests
+// VCL-total Tests
 //==============================================================================
 
-test "vql query with null handle returns 0" {
+test "vcl query with null handle returns 0" {
     const ptr = verisimiser_vql_query(null, 0);
     try testing.expectEqual(@as(u64, 0), ptr);
 }
 
-test "vql free result with null is safe" {
+test "vcl free result with null is safe" {
     verisimiser_vql_free_result(0); // Should not crash
 }
 

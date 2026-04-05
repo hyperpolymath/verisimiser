@@ -439,11 +439,11 @@ export fn verisimiser_drift_category_score(
 }
 
 //==============================================================================
-// VQL-UT Query Interface
+// VCL-total Query Interface
 //==============================================================================
 
-/// Execute a VQL-UT query against the augmented database.
-/// query_ptr: pointer to null-terminated VQL-UT query string.
+/// Execute a VCL-total query against the augmented database.
+/// query_ptr: pointer to null-terminated VCL-total query string.
 /// Returns pointer to result set, or 0 on failure.
 export fn verisimiser_vql_query(
     handle: ?*Handle,
@@ -461,11 +461,11 @@ export fn verisimiser_vql_query(
 
     _ = query_ptr;
 
-    // TODO: parse VQL-UT query, plan execution, return result set
+    // TODO: parse VCL-total query, plan execution, return result set
     return 0;
 }
 
-/// Free a VQL-UT query result set.
+/// Free a VCL-total query result set.
 export fn verisimiser_vql_free_result(result_ptr: u64) void {
     if (result_ptr == 0) return;
     // TODO: free result set memory

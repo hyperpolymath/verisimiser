@@ -282,7 +282,7 @@ fn default_sidecar_storage() -> String {
     "sqlite".to_string()
 }
 fn default_sidecar_path() -> String {
-    ".verisimdb/sidecar.db".to_string()
+    ".verisim/sidecar.db".to_string()
 }
 
 // --- Public API ---
@@ -335,7 +335,7 @@ enable-simulation = {enable_simulation}
 
 [sidecar]
 storage = "sqlite"
-path = ".verisimdb/sidecar.db"
+path = ".verisim/sidecar.db"
 "#
     );
 

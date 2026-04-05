@@ -81,23 +81,23 @@ fn test_full_pipeline_blog_schema() {
 
     // Verify all expected sidecar tables are present.
     assert!(
-        overlay_ddl.contains("verisimdb_metadata"),
+        overlay_ddl.contains("verisim_metadata"),
         "Should contain metadata table"
     );
     assert!(
-        overlay_ddl.contains("verisimdb_provenance_log"),
+        overlay_ddl.contains("verisim_provenance_log"),
         "Should contain provenance table"
     );
     assert!(
-        overlay_ddl.contains("verisimdb_lineage_graph"),
+        overlay_ddl.contains("verisim_lineage_graph"),
         "Should contain lineage table"
     );
     assert!(
-        overlay_ddl.contains("verisimdb_temporal_versions"),
+        overlay_ddl.contains("verisim_temporal_versions"),
         "Should contain temporal table"
     );
     assert!(
-        overlay_ddl.contains("verisimdb_access_policies"),
+        overlay_ddl.contains("verisim_access_policies"),
         "Should contain access policies table"
     );
 
@@ -149,9 +149,9 @@ fn test_full_pipeline_blog_schema() {
 
     // Step 4: Render interceptors to SQL and verify output.
     let rendered = query::render_interceptors(&interceptors);
-    assert!(rendered.contains("verisimdb_users_with_provenance"));
-    assert!(rendered.contains("verisimdb_posts_with_temporal"));
-    assert!(rendered.contains("verisimdb_comments_with_provenance"));
+    assert!(rendered.contains("verisim_users_with_provenance"));
+    assert!(rendered.contains("verisim_posts_with_temporal"));
+    assert!(rendered.contains("verisim_comments_with_provenance"));
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ enable-simulation = false
 
 [sidecar]
 storage = "sqlite"
-path = ".verisimdb/test-sidecar.db"
+path = ".verisim/test-sidecar.db"
 "#;
 
     let manifest: manifest::Manifest = toml::from_str(toml_content).unwrap();
@@ -201,7 +201,7 @@ path = ".verisimdb/test-sidecar.db"
     assert!(!manifest.octad.enable_simulation);
 
     assert_eq!(manifest.sidecar.storage, "sqlite");
-    assert_eq!(manifest.sidecar.path, ".verisimdb/test-sidecar.db");
+    assert_eq!(manifest.sidecar.path, ".verisim/test-sidecar.db");
 
     // Enabled count: data(1) + metadata(1) + provenance(1) + lineage(1) + temporal(1) + constraints(1) = 6
     assert_eq!(manifest.octad.enabled_count(), 6);
@@ -457,7 +457,7 @@ enable-simulation = false
 
 [sidecar]
 storage = "sqlite"
-path = ".verisimdb/test.db"
+path = ".verisim/test.db"
 "#,
             schema_path.display()
         )
@@ -476,14 +476,14 @@ path = ".verisimdb/test.db"
 
     // Generate overlay.
     let overlay_ddl = overlay::generate_sidecar_schema(&schema, &manifest.octad);
-    assert!(overlay_ddl.contains("verisimdb_provenance_log"));
-    assert!(overlay_ddl.contains("verisimdb_temporal_versions"));
+    assert!(overlay_ddl.contains("verisim_provenance_log"));
+    assert!(overlay_ddl.contains("verisim_temporal_versions"));
     assert!(
-        !overlay_ddl.contains("verisimdb_lineage_graph"),
+        !overlay_ddl.contains("verisim_lineage_graph"),
         "Lineage is disabled"
     );
     assert!(
-        !overlay_ddl.contains("verisimdb_access_policies"),
+        !overlay_ddl.contains("verisim_access_policies"),
         "Access control is disabled"
     );
 

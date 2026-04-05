@@ -42,12 +42,12 @@ VeriSimiser intercepts database events via CDC, triggers, or hooks.
   PostgreSQL logical replication is the gold standard. Application-level
   hooks are fallback only.
 
-=== VQL-UT Queries
+=== VCL-total Queries
 
 Type-safe queries cross both Tier 1 and Tier 2 boundaries.
 
-* **Threat**: Query injection via malformed VQL-UT strings.
-* **Mitigation**: VQL-UT queries are parsed and type-checked before execution.
+* **Threat**: Query injection via malformed VCL-total strings.
+* **Mitigation**: VCL-total queries are parsed and type-checked before execution.
   TypedQLiser provides compile-time validation. No string interpolation into
   backend queries.
 

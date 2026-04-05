@@ -421,7 +421,7 @@ impl SidecarConfig {
     pub fn default_sqlite() -> Self {
         Self {
             storage: "sqlite".to_string(),
-            path: ".verisimdb/sidecar.db".to_string(),
+            path: ".verisim/sidecar.db".to_string(),
         }
     }
 

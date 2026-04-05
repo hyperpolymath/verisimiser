@@ -61,7 +61,7 @@ enum Commands {
         #[arg(short, long, default_value = "verisimiser.toml")]
         manifest: String,
         /// Output directory for generated SQL files.
-        #[arg(short, long, default_value = ".verisimdb")]
+        #[arg(short, long, default_value = ".verisim")]
         output: String,
     },
     /// Start the VeriSimiser augmentation daemon.

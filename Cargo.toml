@@ -7,7 +7,7 @@ authors = ["Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>"]
 description = "Augment any database with VeriSimDB octad capabilities — drift detection, provenance, temporal versioning, and modality overlays"
 license-file = "LICENSE"
 repository = "https://github.com/hyperpolymath/verisimiser"
-keywords = ["verisimdb", "database", "augmentation", "drift-detection", "provenance"]
+keywords = ["verisim", "database", "augmentation", "drift-detection", "provenance"]
 categories = ["command-line-utilities", "database"]
 
 [dependencies]

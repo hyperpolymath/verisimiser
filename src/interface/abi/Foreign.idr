@@ -11,7 +11,7 @@
 ||| - Database connection (connect to target DB)
 ||| - Octad overlay (attach dimensions to entities)
 ||| - Tier 1: drift detection, provenance, temporal versioning
-||| - VQL-UT queries (type-safe octad queries)
+||| - VCL-total queries (type-safe octad queries)
 ||| - Error handling and version info
 |||
 ||| All functions are declared here with type signatures and safety proofs.
@@ -236,17 +236,17 @@ driftCategoryScore h entityId cat =
   primIO (prim__driftCategoryScore (handlePtr h) entityId (driftToInt cat))
 
 --------------------------------------------------------------------------------
--- VQL-UT Query Interface
+-- VCL-total Query Interface
 --------------------------------------------------------------------------------
 
-||| Execute a VQL-UT query against the augmented database.
+||| Execute a VCL-total query against the augmented database.
 ||| The query string is type-checked before execution.
 export
 %foreign "C:verisimiser_vql_query, libverisimiser"
 prim__vqlQuery : Bits64 -> Bits64 -> PrimIO Bits64
 
-||| Safe wrapper: execute a VQL-UT query.
-||| queryPtr should point to a null-terminated VQL-UT query string.
+||| Safe wrapper: execute a VCL-total query.
+||| queryPtr should point to a null-terminated VCL-total query string.
 ||| Returns a pointer to the result set, or Nothing on failure.
 export
 vqlQuery : Handle -> (queryPtr : Bits64) -> IO (Maybe Bits64)
@@ -254,12 +254,12 @@ vqlQuery h qPtr = do
   ptr <- primIO (prim__vqlQuery (handlePtr h) qPtr)
   pure $ if ptr == 0 then Nothing else Just ptr
 
-||| Free a VQL-UT query result set.
+||| Free a VCL-total query result set.
 export
 %foreign "C:verisimiser_vql_free_result, libverisimiser"
 prim__vqlFreeResult : Bits64 -> PrimIO ()
 
-||| Safe wrapper: free a VQL-UT result set.
+||| Safe wrapper: free a VCL-total result set.
 export
 vqlFreeResult : (resultPtr : Bits64) -> IO ()
 vqlFreeResult ptr = primIO (prim__vqlFreeResult ptr)

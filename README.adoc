@@ -139,7 +139,7 @@ provenance = true             # SHA-256 hash-chain audit trail
 temporal-versioning = true    # automatic version history
 
 [tier1.provenance]
-sidecar = "sqlite"            # sqlite | file | verisimdb
+sidecar = "sqlite"            # sqlite | file | verisim
 sidecar-path = ".verisimiser/provenance.db"
 
 [tier1.temporal]
@@ -197,7 +197,7 @@ VeriSimiser is NOT a replacement for VeriSimDB. It's a gateway drug.
 * **VeriSimiser Tier 2** gives you individual octad modalities as sidecars.
   Incremental adoption.
 * **Full VeriSimDB** gives you the complete octad with native cross-modal
-  querying, VQL, and built-in drift normalisation. Full commitment.
+  querying, VCL, and built-in drift normalisation. Full commitment.
 
 The migration path is: Tier 1 → Tier 2 → full VeriSimDB (if you want it).
 Most users will be happy at Tier 1 or Tier 2.

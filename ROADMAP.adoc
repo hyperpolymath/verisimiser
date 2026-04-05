@@ -20,8 +20,8 @@
 * [ ] Cross-modal drift detection — read-path observer
 * [ ] Drift index with 8-category classification
 * [ ] Idris2 ABI proofs: sidecar isolation, hash-chain integrity, version ordering
-* [ ] Zig FFI bridge: database connection, overlay operations, VQL-UT queries
-* [ ] End-to-end test: PostgreSQL -> verisimiser overlay -> VQL-UT query
+* [ ] Zig FFI bridge: database connection, overlay operations, VCL-total queries
+* [ ] End-to-end test: PostgreSQL -> verisimiser overlay -> VCL-total query
 
 == Phase 2: Multi-Backend Support
 * [ ] SQLite interception via sqlite3_update_hook / WAL monitoring
@@ -41,8 +41,8 @@
 * [ ] Spatial overlay (R-tree geospatial coordinates)
 * [ ] Independent enable/disable per overlay via manifest
 
-== Phase 4: VQL-UT Integration
-* [ ] VQL-UT type-safe query parsing
+== Phase 4: VCL-total Integration
+* [ ] VCL-total type-safe query parsing
 * [ ] Cross-tier queries (Tier 1 + Tier 2 in single query)
 * [ ] TypedQLiser integration for compile-time query validation
 * [ ] Query planner for multi-sidecar operations

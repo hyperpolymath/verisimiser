@@ -23,4 +23,4 @@ enable-simulation = false
 
 [sidecar]
 storage = "sqlite"
-path = ".verisimdb/sidecar.db"
+path = ".verisim/sidecar.db"
