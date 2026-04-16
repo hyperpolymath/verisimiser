@@ -140,11 +140,11 @@ fn parse_create_table(statement: &str) -> Result<Option<TableDef>> {
     let _before_paren = statement[..paren_start].trim();
     let name_part = if upper.contains("IF NOT EXISTS") {
         // Skip past "CREATE TABLE IF NOT EXISTS".
-        let idx = upper.find("IF NOT EXISTS").unwrap() + "IF NOT EXISTS".len();
+        let idx = upper.find("IF NOT EXISTS").expect("TODO: handle error") + "IF NOT EXISTS".len();
         statement[idx..paren_start].trim()
     } else {
         // Skip past "CREATE TABLE".
-        let idx = upper.find("TABLE").unwrap() + "TABLE".len();
+        let idx = upper.find("TABLE").expect("TODO: handle error") + "TABLE".len();
         statement[idx..paren_start].trim()
     };
 
@@ -329,7 +329,7 @@ mod tests {
                 created_at TIMESTAMP NOT NULL
             );
         "#;
-        let schema = parse_sql_schema(ddl).unwrap();
+        let schema = parse_sql_schema(ddl).expect("TODO: handle error");
         assert_eq!(schema.tables.len(), 1);
         assert_eq!(schema.tables[0].name, "posts");
         assert_eq!(schema.tables[0].columns.len(), 4);
@@ -358,7 +358,7 @@ mod tests {
                 title TEXT NOT NULL
             );
         "#;
-        let schema = parse_sql_schema(ddl).unwrap();
+        let schema = parse_sql_schema(ddl).expect("TODO: handle error");
         assert_eq!(schema.tables.len(), 2);
         assert_eq!(schema.tables[0].name, "users");
         assert_eq!(schema.tables[1].name, "posts");
@@ -373,7 +373,7 @@ mod tests {
                 PRIMARY KEY (post_id, tag_id)
             );
         "#;
-        let schema = parse_sql_schema(ddl).unwrap();
+        let schema = parse_sql_schema(ddl).expect("TODO: handle error");
         assert_eq!(schema.tables[0].columns.len(), 2);
         assert!(schema.tables[0].columns[0].is_primary_key);
         assert!(schema.tables[0].columns[1].is_primary_key);
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn test_parse_if_not_exists() {
         let ddl = "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);";
-        let schema = parse_sql_schema(ddl).unwrap();
+        let schema = parse_sql_schema(ddl).expect("TODO: handle error");
         assert_eq!(schema.tables.len(), 1);
         assert_eq!(schema.tables[0].name, "settings");
     }
@@ -390,14 +390,14 @@ mod tests {
     #[test]
     fn test_parse_empty_schema() {
         let ddl = "-- just a comment\n";
-        let schema = parse_sql_schema(ddl).unwrap();
+        let schema = parse_sql_schema(ddl).expect("TODO: handle error");
         assert!(schema.tables.is_empty());
     }
 
     #[test]
     fn test_parse_varchar_with_length() {
         let ddl = "CREATE TABLE users (name VARCHAR(255) NOT NULL, email VARCHAR(320));";
-        let schema = parse_sql_schema(ddl).unwrap();
+        let schema = parse_sql_schema(ddl).expect("TODO: handle error");
         assert_eq!(schema.tables[0].columns[0].sql_type, "VARCHAR(255)");
         assert_eq!(schema.tables[0].columns[1].sql_type, "VARCHAR(320)");
     }

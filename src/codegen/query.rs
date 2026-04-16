@@ -388,7 +388,7 @@ mod tests {
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
-        let view = interceptors[0].provenance_view.as_ref().unwrap();
+        let view = interceptors[0].provenance_view.as_ref().expect("TODO: handle error");
         assert!(view.contains("verisimdb_posts_with_provenance"));
         assert!(view.contains("posts.id"));
         assert!(view.contains("posts.title"));
@@ -407,7 +407,7 @@ mod tests {
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
-        let view = interceptors[0].temporal_view.as_ref().unwrap();
+        let view = interceptors[0].temporal_view.as_ref().expect("TODO: handle error");
         assert!(view.contains("verisimdb_posts_with_temporal"));
         assert!(view.contains("verisimdb_temporal_versions"));
         assert!(view.contains("valid_to IS NULL"));
