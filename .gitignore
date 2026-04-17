@@ -104,3 +104,10 @@ sync_report*.txt
 # Hypatia scan cache (local-only)
 .hypatia/
 target/
+node_modules/
+_build/
+deps/
+.elixir_ls/
+.cache/
+build/
+dist/
