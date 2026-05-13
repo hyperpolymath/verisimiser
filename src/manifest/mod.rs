@@ -306,11 +306,11 @@ pub fn init_manifest(database: &str) -> Result<()> {
         anyhow::bail!("{} already exists — remove it first to reinitialise", path);
     }
 
-    let enable_simulation = if database == "sqlite" {
-        "false"
-    } else {
-        "false"
-    };
+    // Simulation defaults to off across all backends. The previous ternary
+    // returned "false" on both branches; if backend-specific defaults are
+    // needed later (e.g. enable simulation only when the storage is SQLite),
+    // this is the place to add them.
+    let enable_simulation = "false";
 
     let template = format!(
         r#"# SPDX-License-Identifier: PMPL-1.0-or-later
