@@ -160,7 +160,12 @@ fn generate_provenance_view(
         table_name
     );
 
-    // Use a subquery to get the latest provenance entry per entity.
+    // V-L2-K1: the previous greatest-N-per-group subquery used a broken
+    // correlation (the inner `MAX(p2.timestamp)` subquery referenced the
+    // *outer* uncorrelated `verisimdb_provenance_log` row instead of the
+    // grouping aliased as `prov`). Replaced with the canonical
+    // ROW_NUMBER() partition-by-entity pattern, which works on SQLite
+    // 3.25+ and PostgreSQL.
     format!(
         "{comment}\
          CREATE VIEW IF NOT EXISTS verisimdb_{table_name}_with_provenance AS\n\
@@ -173,14 +178,14 @@ fn generate_provenance_view(
          FROM {table_name}\n\
          LEFT JOIN (\n\
          \x20   SELECT entity_id, operation, actor, timestamp, hash\n\
-         \x20   FROM verisimdb_provenance_log\n\
-         \x20   WHERE table_name = '{table_name}'\n\
-         \x20   AND timestamp = (\n\
-         \x20       SELECT MAX(p2.timestamp)\n\
-         \x20       FROM verisimdb_provenance_log p2\n\
-         \x20       WHERE p2.entity_id = verisimdb_provenance_log.entity_id\n\
-         \x20       AND p2.table_name = '{table_name}'\n\
-         \x20   )\n\
+         \x20   FROM (\n\
+         \x20       SELECT entity_id, operation, actor, timestamp, hash,\n\
+         \x20              ROW_NUMBER() OVER (PARTITION BY entity_id\n\
+         \x20                                 ORDER BY timestamp DESC) AS _rn\n\
+         \x20       FROM verisimdb_provenance_log\n\
+         \x20       WHERE table_name = '{table_name}'\n\
+         \x20   ) ranked\n\
+         \x20   WHERE ranked._rn = 1\n\
          ) prov ON prov.entity_id = ({entity_id_expr});\n\n",
         columns = column_list.join(",\n"),
     )
@@ -399,6 +404,17 @@ mod tests {
         assert!(view.contains("posts.id"));
         assert!(view.contains("posts.title"));
         assert!(view.contains("verisimdb_provenance_log"));
+
+        // V-L2-K1: the latest-per-entity selection uses ROW_NUMBER() OVER
+        // PARTITION BY, not the previous broken self-correlation.
+        assert!(
+            view.contains("ROW_NUMBER() OVER (PARTITION BY entity_id"),
+            "provenance view must use ROW_NUMBER()-partition pattern (V-L2-K1)"
+        );
+        assert!(
+            !view.contains("WHERE p2.entity_id = verisimdb_provenance_log.entity_id"),
+            "broken self-correlation must be gone"
+        );
     }
 
     #[test]
