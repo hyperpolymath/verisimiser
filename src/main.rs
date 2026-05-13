@@ -34,6 +34,12 @@ enum Commands {
         /// Database backend: postgresql, sqlite, or mongodb.
         #[arg(short, long, default_value = "postgresql")]
         database: String,
+        /// Project name (default: "my-augmented-db").
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Overwrite an existing verisimiser.toml.
+        #[arg(short, long)]
+        force: bool,
     },
     /// Parse the target database schema and generate sidecar overlay + interceptors.
     Generate {
@@ -86,7 +92,11 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { database } => manifest::init_manifest(&database),
+        Commands::Init {
+            database,
+            name,
+            force,
+        } => manifest::init_manifest(&database, name.as_deref(), force),
 
         Commands::Generate { manifest, output } => {
             let m = manifest::load_manifest(&manifest)?;
@@ -104,7 +114,7 @@ fn main() -> Result<()> {
             };
 
             // Determine the backend for SQL dialect selection.
-            let backend_name = m.database.effective_backend();
+            let backend_name = m.database.effective_backend()?;
             let backend = abi::DatabaseBackend::from_str(backend_name)
                 .unwrap_or(abi::DatabaseBackend::PostgreSQL);
 
@@ -139,7 +149,7 @@ fn main() -> Result<()> {
             } else {
                 &m.verisimiser.name
             };
-            let backend = m.database.effective_backend();
+            let backend = m.database.effective_backend()?;
             println!(
                 "Starting VeriSimiser augmentation for {} ({})",
                 name, backend
@@ -183,8 +193,7 @@ fn main() -> Result<()> {
 
         Commands::Status { manifest } => {
             let m = manifest::load_manifest(&manifest)?;
-            manifest::print_status(&m);
-            Ok(())
+            manifest::print_status(&m)
         }
 
         Commands::Octad => {

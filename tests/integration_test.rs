@@ -75,6 +75,7 @@ fn test_full_pipeline_blog_schema() {
         enable_lineage: true,
         enable_temporal: true,
         enable_access_control: true,
+        enable_constraints: true,
         enable_simulation: false,
     };
     let overlay_ddl = overlay::generate_sidecar_schema(&schema, &octad);
@@ -234,7 +235,7 @@ vector = false
 
     assert_eq!(manifest.verisimiser.name, "legacy-db");
     assert_eq!(manifest.database.target_db, "postgresql");
-    assert_eq!(manifest.database.effective_backend(), "postgresql");
+    assert_eq!(manifest.database.effective_backend().unwrap(), "postgresql");
     assert!(manifest.tier1.provenance);
     assert!(manifest.tier1.temporal_versioning);
     assert!(manifest.tier1.drift_detection);

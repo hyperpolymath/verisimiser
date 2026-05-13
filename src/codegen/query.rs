@@ -343,6 +343,7 @@ mod tests {
             enable_lineage: true,
             enable_temporal: true,
             enable_access_control: true,
+            enable_constraints: true,
             enable_simulation: false,
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
@@ -364,6 +365,7 @@ mod tests {
             enable_lineage: false,
             enable_temporal: false,
             enable_access_control: false,
+            enable_constraints: false,
             enable_simulation: false,
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
@@ -384,11 +386,15 @@ mod tests {
             enable_lineage: false,
             enable_temporal: false,
             enable_access_control: false,
+            enable_constraints: false,
             enable_simulation: false,
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
-        let view = interceptors[0].provenance_view.as_ref().expect("TODO: handle error");
+        let view = interceptors[0]
+            .provenance_view
+            .as_ref()
+            .expect("TODO: handle error");
         assert!(view.contains("verisimdb_posts_with_provenance"));
         assert!(view.contains("posts.id"));
         assert!(view.contains("posts.title"));
@@ -403,11 +409,15 @@ mod tests {
             enable_lineage: false,
             enable_temporal: true,
             enable_access_control: false,
+            enable_constraints: false,
             enable_simulation: false,
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
-        let view = interceptors[0].temporal_view.as_ref().expect("TODO: handle error");
+        let view = interceptors[0]
+            .temporal_view
+            .as_ref()
+            .expect("TODO: handle error");
         assert!(view.contains("verisimdb_posts_with_temporal"));
         assert!(view.contains("verisimdb_temporal_versions"));
         assert!(view.contains("valid_to IS NULL"));
