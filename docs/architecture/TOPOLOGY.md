@@ -12,7 +12,7 @@ verisimiser/
 │   ├── src/manifest/         — TOML manifest parsing (verisimiser.toml)
 │   ├── src/tier1/            — Tier 1 piggyback data types
 │   │   ├── drift.rs          — DriftReport, DriftCategory (8 categories)
-│   │   ├── provenance.rs     — ProvenanceRecord, SHA-256 hash chain
+│   │   ├── provenance.rs     — re-exports abi::ProvenanceEntry; future write-path helpers (V-L1-C1)
 │   │   └── temporal.rs       — TemporalVersion, point-in-time snapshots
 │   ├── src/tier2/            — Tier 2 overlay stubs (graph, vector, tensor, semantic, document, spatial)
 │   ├── src/intercept/        — Per-backend interception strategies

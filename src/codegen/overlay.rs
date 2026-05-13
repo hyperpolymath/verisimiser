@@ -114,7 +114,13 @@ fn generate_metadata_table(schema: &ParsedSchema) -> String {
 ///
 /// Stores a SHA-256 hash-chained audit trail of all data modifications.
 /// Each row chains to its predecessor via `previous_hash`, forming an
-/// append-only, tamper-evident log.
+/// append-only, tamper-evident log (see
+/// `docs/theory/provenance-threat-model.adoc`).
+///
+/// The `chain_head` table is the per-entity head pointer used for the
+/// write-path lock (V-L2-L1). The UNIQUE INDEX on `(entity_id,
+/// previous_hash)` (V-L2-L2) makes chain forks structurally impossible
+/// — defence in depth for if the lock is ever bypassed.
 fn generate_provenance_table() -> String {
     "-- Provenance: SHA-256 hash-chained audit trail\n\
      CREATE TABLE IF NOT EXISTS verisimdb_provenance_log (\n\
@@ -128,8 +134,24 @@ fn generate_provenance_table() -> String {
      \x20   before_snapshot TEXT,          -- JSON of entity state before operation\n\
      \x20   transformation  TEXT           -- description of transformation applied\n\
      );\n\
+     -- V-L2-L2: forbid chain forks at the DB level. Genesis records all\n\
+     -- carry previous_hash='' so this also enforces a single genesis per\n\
+     -- entity.\n\
+     CREATE UNIQUE INDEX IF NOT EXISTS ux_provenance_chain\n\
+     \x20   ON verisimdb_provenance_log(entity_id, previous_hash);\n\
      CREATE INDEX IF NOT EXISTS idx_provenance_entity ON verisimdb_provenance_log(entity_id);\n\
-     CREATE INDEX IF NOT EXISTS idx_provenance_table  ON verisimdb_provenance_log(table_name);\n\n"
+     CREATE INDEX IF NOT EXISTS idx_provenance_table  ON verisimdb_provenance_log(table_name);\n\
+     \n\
+     -- V-L2-L1: per-entity head pointer. The write path takes a row\n\
+     -- lock here (SELECT … FOR UPDATE / BEGIN IMMEDIATE) so concurrent\n\
+     -- appenders on the same entity serialise; cross-entity appends\n\
+     -- remain parallel. Each successful append updates head_hash in\n\
+     -- the same transaction as the INSERT into verisimdb_provenance_log.\n\
+     CREATE TABLE IF NOT EXISTS verisimdb_provenance_chain_head (\n\
+     \x20   entity_id  TEXT PRIMARY KEY,\n\
+     \x20   head_hash  TEXT NOT NULL,\n\
+     \x20   updated_at TEXT NOT NULL\n\
+     );\n\n"
         .to_string()
 }
 
@@ -319,6 +341,24 @@ mod tests {
         assert!(ddl.contains("previous_hash"));
         assert!(ddl.contains("entity_id"));
         assert!(ddl.contains("actor"));
+    }
+
+    /// V-L2-L2: forks are forbidden by a UNIQUE INDEX on
+    /// (entity_id, previous_hash).
+    #[test]
+    fn test_provenance_table_has_unique_chain_index() {
+        let ddl = generate_provenance_table();
+        assert!(ddl.contains("UNIQUE INDEX"));
+        assert!(ddl.contains("ux_provenance_chain"));
+        assert!(ddl.contains("(entity_id, previous_hash)"));
+    }
+
+    /// V-L2-L1: chain_head table exists for per-entity write serialisation.
+    #[test]
+    fn test_provenance_table_has_chain_head() {
+        let ddl = generate_provenance_table();
+        assert!(ddl.contains("verisimdb_provenance_chain_head"));
+        assert!(ddl.contains("head_hash"));
     }
 
     #[test]

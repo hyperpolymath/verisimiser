@@ -269,19 +269,27 @@ fn test_provenance_chain_integrity_multi_step() {
     assert_ne!(update1.hash, update2.hash);
     assert_ne!(update2.hash, delete.hash);
 
-    // Tamper detection: mutating any entry should break verification.
+    // Tamper detection: every hash-covered field must break verification
+    // when mutated (V-L2-C1, V-L2-C3, V-L2-C4).
     let mut tampered = update1.clone();
     tampered.actor = "evil-mallory".to_string();
     assert!(
-        tampered.verify(),
-        "Actor is not part of hash — tamper to actor alone is invisible"
+        !tampered.verify(),
+        "actor is part of the hash; tampering with it must break verify"
     );
-    // But modifying a hash-covered field should be detected.
+
     let mut tampered_op = update1.clone();
     tampered_op.operation = "delete".to_string();
     assert!(
         !tampered_op.verify(),
-        "Tampering with operation should break verification"
+        "tampering with operation must break verify"
+    );
+
+    let mut tampered_snap = update1.clone();
+    tampered_snap.before_snapshot = Some("{}".into());
+    assert!(
+        !tampered_snap.verify(),
+        "before_snapshot is part of the hash; tampering with it must break verify"
     );
 }
 
