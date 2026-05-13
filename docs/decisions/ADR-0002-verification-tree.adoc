@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= ADR-0002: Strip the empty verification/ subtree
+:revdate: 2026-05-13
+:status: Accepted
+
+== Status
+
+Accepted — 2026-05-13.
+
+Resolves: https://github.com/hyperpolymath/verisimiser/issues/15[V-L3-D1].
+
+== Context
+
+The `verification/` tree contained eight subdirectories
+(`benchmarks/`, `coverage/`, `fuzzing/`, `proofs/`, `safety_case/`,
+`simulations/`, `tests/`, `traceability/`), each with a ~20-byte
+`README.adoc` and an a2ml manifest. Zero proofs, zero benchmarks,
+zero fuzzing, zero safety case.
+
+(The actual Idris2 ABI declarations and Zig FFI implementation live in
+`src/interface/abi/{Types,Layout,Foreign}.idr` and `src/interface/ffi/`
+respectively — those are real Phase 0 stubs and are unaffected by this
+ADR. The README's reference to "Idris2 proofs (in `src/interface/abi/`)"
+already points at the correct location for the stubs; only the proofs
+themselves are still future work.)
+
+A reader following the README's verification/-shaped tree was misled
+into thinking benchmarks, fuzzing, safety cases, and traceability
+artifacts existed for this product.
+
+== Decision
+
+Strip the empty `verification/` subtree from the repository.
+
+Reintroduce `verification/` only when there is something to put in it.
+The first content is expected to be a property-test harness landing
+alongside V-L1-C1 (the Tier 1 SQLite piggyback) — at that point a
+single `verification/property-tests/` directory will be added with
+real content. Don't predeclare the rest of the eight subdirs until
+they have artifacts.
+
+== Consequences
+
+. The empty `verification/` subtree is deleted in the same change set
+  that lands this ADR.
+. The README's "Status" / "Architecture" copy that referenced
+  `verification/` is reworded to point at `src/interface/abi/` only
+  (where the Idris2 stubs actually live).
+. Future verification artifacts (proofs, benchmarks, fuzz targets) are
+  added directory-by-directory as they appear, not predeclared. The
+  first such addition is expected alongside V-L1-C1 (Tier 1 SQLite
+  piggyback) as a property-test harness.
+
+== Alternatives considered
+
+Populate the subtree::
+Rejected for now. Writing eight stub READMEs costs effort and doesn't
+move the product forward. The contracts the README cited (drift
+correctness, chain integrity, version ordering, sidecar isolation)
+become provable only once the Tier 1 implementation exists, which is
+V-L1-C1.
+
+Leave the subtree, soften the README::
+Rejected. Empty scaffolding misleads contributors who follow the tree
+looking for examples to extend.

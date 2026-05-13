@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= ADR-0001: Canonical octad ontology — concerns, not modalities
+:revdate: 2026-05-13
+:status: Accepted
+
+== Status
+
+Accepted — 2026-05-13.
+
+Resolves: https://github.com/hyperpolymath/verisimiser/issues/19[V-L1-A1].
+
+Closes as wontfix: https://github.com/hyperpolymath/verisimiser/issues/21[V-L1-A3] (the modalities-first refactor).
+
+Unblocks: https://github.com/hyperpolymath/verisimiser/issues/20[V-L1-A2] (the README rewrite).
+
+== Context
+
+Two competing ontologies have lived in this repository under the same name
+("octad"):
+
+Modalities octad (README §"VeriSimDB's Octad: Eight Modalities")::
+Graph · Vector · Tensor · Semantic · Document · Temporal · Provenance · Spatial.
+These are *representations* of an entity — how the same data is stored in
+different shapes. The README's eight cross-modal drift categories
+(structural, semantic, temporal, statistical, referential, provenance,
+spatial, embedding) presuppose this ontology.
+
+Concerns octad (`src/abi/mod.rs::OctadDimension`, `src/manifest/mod.rs::OctadConfig`, `src/main.rs::print_octad`)::
+Data · Metadata · Provenance · Lineage · Constraints · AccessControl ·
+Temporal · Simulation. These are *concerns/aspects* of data — what you
+want to know or enforce about it.
+
+The code commits to the concerns octad; the README leads with the modalities
+octad. A user cannot answer "what does an octad-augmented entity look like?"
+without picking one.
+
+== Decision
+
+The *concerns* octad is canonical.
+
+The eight dimensions of the verisimiser octad are:
+
+. **Data** — the original entity as stored in the target database.
+. **Metadata** — schema and type information.
+. **Provenance** — SHA-256 hash-chain tracking of who did what and when.
+. **Lineage** — directed-edge graph of data derivation (target nameschematically a DAG; see ADR-0004 when written).
+. **Constraints** — cross-dimensional invariant enforcement, including
+  drift detection between Data + Metadata + active overlays.
+. **AccessControl** — policy-based row/column-level access permissions.
+. **Temporal** — version history with point-in-time queries and rollback.
+. **Simulation** — what-if branching and sandbox query execution.
+
+Modalities (Graph, Vector, Tensor, Semantic, Document, Spatial) are
+*Tier 2 overlays* — independent representational projections that a user
+can enable per-entity for similarity search, full-text search, geospatial
+indexing, etc. They are not "the octad" and not co-equal with the eight
+concerns. Provenance and Temporal in the modalities list collapse onto
+the same-named concerns.
+
+The eight "cross-modal drift categories" become *symptoms observed by
+the Constraints concern* when Data, Metadata, and the active overlays
+disagree:
+
+[cols="1,2"]
+|===
+| Drift category (legacy framing) | Where it lives in the concerns ontology
+
+| Structural | Constraints (Data vs Metadata schema agreement)
+| Semantic   | Constraints across overlays
+| Temporal   | Constraints between Temporal versions across overlays
+| Statistical | Constraints over Tier 2 vector/tensor overlay drift
+| Referential | Constraints between Tier 2 graph overlay and Data
+| Provenance | Constraints over Provenance chain integrity
+| Spatial    | Constraints over Tier 2 spatial overlay
+| Embedding  | Constraints between Tier 2 vector overlay and source documents
+|===
+
+== Consequences
+
+. README and ROADMAP must be rewritten to drop the modalities octad table
+  and reframe the drift categories under Constraints. Tracked as V-L1-A2.
+. The modalities-first refactor (V-L1-A3) is *not* done. Closed as wontfix.
+. Tier 2 design (V-L1-F, V-L1-G, V-L1-H) continues to use modality terms
+  for overlays — they are just no longer presented as "the octad."
+. `OctadDimension` enum and `OctadConfig` fields are stable; no source-level
+  rename triggered by this ADR.
+
+== Alternatives considered
+
+Modalities octad as canonical::
+Rejected. Would have required rewriting `abi`, `manifest`, `codegen`, tests,
+and example manifests — a multi-week change for pre-alpha framing. The
+codebase had already converged on the concerns ontology; the only cost of
+keeping it is doc updates.
+
+"Both, with one as primary"::
+Considered but rejected. Two ontologies sharing a name is the bug;
+ranking them doesn't fix it.
+
+Renaming "octad" to something else (e.g. "octave")::
+Out of scope here. The brand survives; the contents are defined.
