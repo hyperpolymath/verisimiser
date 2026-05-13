@@ -51,8 +51,12 @@ assail:
     @command -v panic-attack >/dev/null 2>&1 && panic-attack assail . || echo "panic-attack not found — install from https://github.com/hyperpolymath/panic-attacker"
 
 # --- Domain-Specific Recipes (verisimiser) ---
-
-# Augment a database with VeriSimDB octad\naugment DB_URL:\n    cargo run -- augment {{DB_URL}}\n\n# Check octad layer completeness\ncheck-octad DB_URL:\n    cargo run -- check-octad {{DB_URL}}\n\n# Generate migration scripts\nmigrate DB_URL:\n    cargo run -- migrate {{DB_URL}}
+#
+# (Reserved.) Recipes for clap subcommands like `augment`, `check-octad`,
+# and `migrate` were removed per ADR-0003: they wrapped subcommands that
+# don't exist in src/main.rs (the real subcommands are `init`, `generate`,
+# `start`, `drift`, `provenance`, `history`, `status`, `octad`).
+# Re-add wrappers here when their underlying subcommands ship.
 
 # Run contractile checks
 contractile-check:
