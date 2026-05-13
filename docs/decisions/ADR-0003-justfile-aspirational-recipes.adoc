@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= ADR-0003: Remove aspirational Justfile recipes
+:revdate: 2026-05-13
+:status: Accepted
+
+== Status
+
+Accepted — 2026-05-13.
+
+Resolves: https://github.com/hyperpolymath/verisimiser/issues/11[V-L3-C2].
+Unblocks: https://github.com/hyperpolymath/verisimiser/issues/10[V-L3-C1] (the
+mechanical fix to the broken recipe block).
+
+== Context
+
+`Justfile` carried a recipe block whose source contained literal `\n`
+characters where newlines were intended. The intent was three recipes
+(`augment`, `check-octad`, `migrate`) calling clap subcommands of the
+same names. The clap CLI in `src/main.rs` exposes
+`init / generate / start / drift / provenance / history / status / octad`
+— there are no `augment`, `check-octad`, or `migrate` subcommands.
+
+So the Justfile advertised commands that don't exist, and did so in a
+syntactically broken way that made the breakage invisible to `just --list`.
+
+== Decision
+
+Delete the three aspirational recipes from `Justfile`.
+
+The Justfile should only reference subcommands that exist. When new
+subcommands are added (per their own design issues), recipe wrappers
+can be added at the same time.
+
+== Consequences
+
+. The broken `\n`-collapsed block is removed cleanly (V-L3-C1).
+. `just --list` no longer shows phantom recipes.
+. Future "convenience wrapper" recipes must be added in the same change
+  set as the underlying subcommand.
+
+== Alternatives considered
+
+Add the missing subcommands::
+Out of scope for V-L3-C2/C1, which are ground-clearing issues. The
+semantics of `augment` / `check-octad` / `migrate` aren't pinned down —
+e.g. `augment DB_URL` overlaps with `generate` (overlay DDL) plus `start`
+(daemon). Designing them is a separate issue, not a one-line fix.
+
+Keep the recipes pointing at not-yet-implemented subcommands::
+Rejected. The recipes would still fail with "Unknown subcommand"; the
+broken UX would just be in a different place.
