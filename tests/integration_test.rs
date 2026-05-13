@@ -83,23 +83,23 @@ fn test_full_pipeline_blog_schema() {
 
     // Verify all expected sidecar tables are present.
     assert!(
-        overlay_ddl.contains("verisim_metadata"),
+        overlay_ddl.contains("verisimdb_metadata"),
         "Should contain metadata table"
     );
     assert!(
-        overlay_ddl.contains("verisim_provenance_log"),
+        overlay_ddl.contains("verisimdb_provenance_log"),
         "Should contain provenance table"
     );
     assert!(
-        overlay_ddl.contains("verisim_lineage_graph"),
+        overlay_ddl.contains("verisimdb_lineage_graph"),
         "Should contain lineage table"
     );
     assert!(
-        overlay_ddl.contains("verisim_temporal_versions"),
+        overlay_ddl.contains("verisimdb_temporal_versions"),
         "Should contain temporal table"
     );
     assert!(
-        overlay_ddl.contains("verisim_access_policies"),
+        overlay_ddl.contains("verisimdb_access_policies"),
         "Should contain access policies table"
     );
 
@@ -151,9 +151,9 @@ fn test_full_pipeline_blog_schema() {
 
     // Step 4: Render interceptors to SQL and verify output.
     let rendered = query::render_interceptors(&interceptors);
-    assert!(rendered.contains("verisim_users_with_provenance"));
-    assert!(rendered.contains("verisim_posts_with_temporal"));
-    assert!(rendered.contains("verisim_comments_with_provenance"));
+    assert!(rendered.contains("verisimdb_users_with_provenance"));
+    assert!(rendered.contains("verisimdb_posts_with_temporal"));
+    assert!(rendered.contains("verisimdb_comments_with_provenance"));
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +436,9 @@ fn test_end_to_end_file_workflow() {
         .unwrap();
     }
 
-    // Write a manifest file.
+    // Write a manifest file. Note: on Windows, schema_path uses backslashes
+    // which are escape characters in TOML basic strings — emit the path as a
+    // TOML literal string (single-quoted) to dodge escape interpretation.
     let manifest_path = dir.path().join("verisimiser.toml");
     {
         let mut f = std::fs::File::create(&manifest_path).unwrap();
@@ -449,7 +451,7 @@ name = "test-articles"
 [database]
 backend = "sqlite"
 connection-string-env = "TEST_DB"
-schema-source = "{}"
+schema-source = '{}'
 
 [octad]
 enable-provenance = true
@@ -483,11 +485,11 @@ path = ".verisim/test.db"
     assert!(overlay_ddl.contains("verisim_provenance_log"));
     assert!(overlay_ddl.contains("verisim_temporal_versions"));
     assert!(
-        !overlay_ddl.contains("verisim_lineage_graph"),
+        !overlay_ddl.contains("verisimdb_lineage_graph"),
         "Lineage is disabled"
     );
     assert!(
-        !overlay_ddl.contains("verisim_access_policies"),
+        !overlay_ddl.contains("verisimdb_access_policies"),
         "Access control is disabled"
     );
 
