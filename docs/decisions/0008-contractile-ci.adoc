@@ -1,0 +1,110 @@
+= Architecture Decision Record: 0008-contractile-ci
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 8. Contractile-check stays informational, not required
+
+Date: 2026-05-14
+
+## Status
+
+Accepted
+
+## Context
+
+`.machine_readable/contractiles/` carries org-wide policy machinery
+(Mustfile, Trustfile, Dustfile, Intendfile — see ADR-0001 RSR
+adoption). The `just contractile-check` recipe shells out and prints
+OK / MISSING for each file. Nothing in CI fails when the recipe
+reports MISSING.
+
+Two coherent positions exist:
+
+1. **Wire it in.** Add a CI job that runs `just contractile-check`
+   and fails the build on missing files. Force every PR to keep
+   the contractile machinery in shape.
+2. **Leave it informational.** Treat the contractiles as documentation
+   (which they currently are — no executable consumer reads them) and
+   stop pretending they're enforced. If a consumer materialises later,
+   re-open this ADR.
+
+## Decision
+
+**Leave it informational** until a real consumer reads the
+contractile files programmatically.
+
+The argument for wiring it in is straightforward: the org adopted
+the RSR template (ADR-0001) and the contractile files are part of
+that template. CI enforcement makes drift visible.
+
+The argument against wins on present cost/benefit:
+
+* Nothing in this repo *consumes* the contractile files at runtime.
+  `verisimiser` itself doesn't read them. The Justfile only checks
+  file existence.
+* "File exists" is the only invariant we can usefully check. We
+  can't verify that the *content* of e.g. `Mustfile.a2ml` is
+  meaningful without a parser, which we haven't built.
+* Failing the build on a missing file produces churn-noise more
+  than signal: contributors will copy the file from another repo
+  to satisfy CI without understanding what it's for.
+* The RSR-antipattern workflow (`rsr-antipattern.yml`) already
+  flags structural drift in adjacent files; the contractiles are
+  inside its scope on the day a contractile parser exists.
+
+This ADR records: today, the contractile-check is **informational
+only**. The `just contractile-check` recipe stays (so contributors
+can still verify the files are present), but no CI job invokes it
+as a required check.
+
+When a real consumer exists — a Rust crate that parses the
+contractile files at build time, an external validator, a
+governance dashboard — re-open this ADR and flip the decision.
+
+### Alternative considered
+
+Wire it in as a required CI job. Rejected for the reasons above.
+
+### Alternative considered (also rejected)
+
+Delete the contractile files entirely. Rejected because the org-wide
+RSR template adoption (ADR-0001) is a real commitment, and removing
+the files locally would make this repo a drift point. They are kept
+for that reason alone, even if no current consumer reads them.
+
+## Consequences
+
+### Positive
+
+* No CI churn-noise on contractile-file drift.
+* The repo's required-check count stays manageable (V-L3-F1 / #59
+  is the parent concern; this ADR contributes one fewer required
+  check).
+* Future contractile work has a clear bar to clear: "ship a
+  parser, then re-open this ADR".
+
+### Negative
+
+* The contractile files can rot without surfacing. If `Mustfile.a2ml`
+  loses its closing bracket, nothing complains until someone
+  reads it manually.
+* New contributors may be confused — "why does this Justfile recipe
+  exist if nothing fails on it?". The contractile-check recipe
+  needs a comment-line answering that ("informational; see
+  ADR-0008").
+
+### Neutral
+
+* The `rsr-antipattern.yml` workflow continues to enforce broader
+  RSR-template structural rules. Anything reaching the "is this
+  file present" level is already covered there.
+
+## Cross-references
+
+* ADR-0001 — adopted RSR template (the contractile files are part
+  of that template).
+* V-L3-F1 / issue #59 — CI noise pruning, of which this ADR is one
+  contributing decision.
+* `Justfile::contractile-check` — the recipe whose output is now
+  explicitly informational.
+* `.machine_readable/contractiles/` — where the files live.

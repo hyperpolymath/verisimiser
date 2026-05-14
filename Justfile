@@ -50,7 +50,7 @@ install:
 assail:
     @command -v panic-attack >/dev/null 2>&1 && panic-attack assail . || echo "panic-attack not found — install from https://github.com/hyperpolymath/panic-attacker"
 
-# Run contractile checks
+# Run contractile checks (informational only — not required by CI per ADR-0008)
 contractile-check:
     @echo "Running contractile validation..."
     @test -f .machine_readable/contractiles/must/Mustfile.a2ml && echo "Mustfile: OK" || echo "Mustfile: MISSING"
