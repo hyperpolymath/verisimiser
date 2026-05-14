@@ -168,6 +168,10 @@ fn generate_lineage_table() -> String {
 /// point-in-time queries and rollback. Each version records when it
 /// became active (`valid_from`) and when it was superseded (`valid_to`).
 fn generate_temporal_table() -> String {
+    // The partial UNIQUE index enforces "at most one current version per
+    // (entity, table)" at the storage layer — two concurrent writers can no
+    // longer both insert a row with `valid_to IS NULL` for the same entity.
+    // The CHECK ensures valid_to never precedes valid_from. Closes #41.
     "-- Temporal: version history with point-in-time support\n\
      CREATE TABLE IF NOT EXISTS verisimdb_temporal_versions (\n\
      \x20   entity_id  TEXT NOT NULL,\n\
@@ -177,9 +181,10 @@ fn generate_temporal_table() -> String {
      \x20   valid_to   TEXT,            -- ISO 8601, NULL if current\n\
      \x20   snapshot   TEXT NOT NULL,   -- JSON serialisation of entity state\n\
      \x20   operation  TEXT NOT NULL,   -- insert, update, rollback\n\
-     \x20   PRIMARY KEY (entity_id, table_name, version)\n\
+     \x20   PRIMARY KEY (entity_id, table_name, version),\n\
+     \x20   CHECK (valid_to IS NULL OR valid_to >= valid_from)\n\
      );\n\
-     CREATE INDEX IF NOT EXISTS idx_temporal_current ON verisimdb_temporal_versions(entity_id, table_name) WHERE valid_to IS NULL;\n\n"
+     CREATE UNIQUE INDEX IF NOT EXISTS idx_temporal_current ON verisimdb_temporal_versions(entity_id, table_name) WHERE valid_to IS NULL;\n\n"
         .to_string()
 }
 
@@ -328,6 +333,35 @@ mod tests {
                 "CHECK (derivation_type IN ('copy','transform','aggregate','join','filter'))"
             ),
             "lineage_graph.derivation_type enum CHECK missing"
+        );
+    }
+
+    /// The "current version" partial index must be UNIQUE and the
+    /// `valid_to >= valid_from` CHECK must be present (closes #41).
+    /// Two concurrent writers must not be able to leave two rows with
+    /// `valid_to IS NULL` for the same `(entity_id, table_name)`.
+    #[test]
+    fn test_temporal_table_has_unique_partial_index_and_valid_to_check() {
+        let schema = test_schema();
+        let octad = OctadConfig {
+            enable_provenance: false,
+            enable_lineage: false,
+            enable_temporal: true,
+            enable_access_control: false,
+            enable_constraints: false,
+            enable_simulation: false,
+        };
+        let ddl = generate_sidecar_schema(&schema, &octad);
+        assert!(ddl.contains("verisimdb_temporal_versions"));
+        assert!(
+            ddl.contains(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_temporal_current ON verisimdb_temporal_versions(entity_id, table_name) WHERE valid_to IS NULL"
+            ),
+            "temporal current-version index must be UNIQUE"
+        );
+        assert!(
+            ddl.contains("CHECK (valid_to IS NULL OR valid_to >= valid_from)"),
+            "temporal valid_to ordering CHECK missing"
         );
     }
 
