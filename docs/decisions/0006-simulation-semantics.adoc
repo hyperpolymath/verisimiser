@@ -1,0 +1,200 @@
+= Architecture Decision Record: 0006-simulation-semantics
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 6. Simulation: branch / delta / merge / conflict semantics
+
+Date: 2026-05-14
+
+## Status
+
+Accepted
+
+## Context
+
+`verisimdb_simulation_branches` and `verisimdb_simulation_deltas`
+tables exist (`src/codegen/overlay.rs`) and `enable_simulation` is a
+manifest flag (per ADR-0004 the Simulation concern is canonical and
+Tier 2). What's missing is the *semantics*: when a user types
+`verisimiser simulate branch new-pricing`, what does the system
+promise to do?
+
+Without that pinned, implementations of `simulate branch`,
+`simulate merge`, `simulate diff`, and the SQL the codegen layer
+emits for branch-aware reads will all diverge. This ADR is the
+binding reference.
+
+## Decision
+
+The simulation system is **isolated snapshots with explicit merge**.
+
+### 6.1 Branch creation
+
+* The root branch is `main` and corresponds to the target
+  database's committed state. It is implicit; it has `branch_id =
+  "main"`, `parent_branch = NULL`, and no deltas.
+* A new branch is created via
+  `verisimiser simulate branch <name> [--from <parent>]`. Without
+  `--from`, the parent is `main`. The branch is created in
+  `status = 'active'` and inherits the parent's accumulated state
+  *as of branch-creation time*.
+* The state inherited is the parent's *committed* state — i.e.
+  the target DB rows plus the parent branch's resolved deltas.
+  It is **frozen at branch-creation time** for the purposes of
+  diff/merge; subsequent commits to the parent do not flow into
+  the branch automatically. (Re-base is a future operation, not
+  part of this ADR.)
+* Self-referencing FK on `parent_branch` (V-L2-J1, #43) is the
+  storage-layer expression of this rule.
+
+### 6.2 Delta isolation
+
+* Each write within a branch produces a row in
+  `verisimdb_simulation_deltas` with `(branch_id, entity_id,
+  table_name, operation, delta_data)`.
+* **Reads within a branch** see the parent's state at branch
+  creation, plus the branch's own deltas (applied in `created_at`
+  order). Reads do **not** see deltas from sibling branches.
+* This is **snapshot isolation**: each branch sees a consistent
+  point-in-time view of its parent at branch start. No phantom
+  reads from siblings; no cross-branch interleavings.
+* Reads in `main` see the target database directly (no deltas
+  table involved).
+* The Temporal concern continues to work *within* a branch —
+  point-in-time queries scoped to that branch see the branch's
+  version of history.
+
+### 6.3 Merge policy
+
+* Merge is **manual** by default:
+  `verisimiser simulate merge <branch> --into <parent>` produces
+  a report of every delta in `<branch>` that would conflict with
+  state in `<parent>` (or `main`). The user must resolve each
+  conflict explicitly (re-apply, drop, or modify) before the
+  merge can complete.
+* A `--strategy last-writer-wins` flag opt-in is supported for
+  bulk-resolution: when set, every delta in the merging branch
+  wins over the parent automatically. This is unsafe by default
+  and the CLI prints an explicit warning.
+* A `--strategy abandon-on-conflict` flag refuses the merge
+  entirely if any conflict exists. Suited to "validate first,
+  then merge later in a clean state" pipelines.
+* CRDTs are **not** offered. Reasoning: the data model is
+  application-defined SQL rows, not CRDT primitives. Faking CRDT
+  semantics over arbitrary SQL is unsound; pretending it works
+  in the common case while breaking in edge cases is worse than
+  manual resolution.
+
+### 6.4 Conflict reporting
+
+* A conflict is detected when, for the same `(entity_id,
+  table_name)`, the merging branch's delta and the target's
+  current state both modify a column with non-equal values.
+* The report is a `Vec<MergeConflict>` returned by the merge
+  function and emitted to stdout (or `--json`):
++
+[source,json]
+----
+{
+  "entity_id": "post-42",
+  "table_name": "posts",
+  "branch_value": { "title": "Q3 Plan v2" },
+  "target_value": { "title": "Q3 Plan v1.5" },
+  "branch_op": "update",
+  "target_provenance": "<hash from verisimdb_provenance_log>",
+  "branch_delta_id": "<delta_id from verisimdb_simulation_deltas>"
+}
+----
+* `target_provenance` lets the user audit who last touched the
+  target value before the merge attempt — combining Simulation
+  with Provenance.
+
+### 6.5 Integration with target-DB transactions
+
+* `simulate branch` is a **sidecar-only** operation. The target
+  database is not touched. Branch creation writes to
+  `verisimdb_simulation_branches` only.
+* `simulate merge` against `main` *does* touch the target DB.
+  The merge is wrapped in a single target-DB transaction; if the
+  transaction rolls back, the corresponding deltas remain in the
+  branch and the branch's `status` stays `active`. If it
+  commits, the branch's `status` flips to `merged` and
+  `merged_at` is set.
+* `simulate merge` against another branch (non-`main` parent)
+  remains sidecar-only — moves deltas from child to parent
+  table, no target write.
+* Failures must be **atomic per merge**: a partial merge of N
+  conflict-free deltas plus a refusal on the N+1th must leave
+  the system as if zero had been merged. The implementation
+  wraps the sidecar writes in a SAVEPOINT and the target-DB
+  writes in a transaction.
+
+### 6.6 Lifecycle
+
+* `status` transitions: `active → merged` (successful merge to
+  parent), or `active → abandoned` (`simulate abandon`). The
+  enum CHECK (V-L2-J1, #43) is the storage-layer expression.
+* Abandoned branches are kept by default (audit trail). The
+  `[retention].simulation-days` field (a future addition to
+  V-L2-P1) would gc them.
+
+## Consequences
+
+### Positive
+
+* Implementers know what to build. `simulate branch`,
+  `simulate merge`, `simulate diff`, `simulate abandon` have
+  pinned semantics.
+* Snapshot isolation makes branch reads predictable. No
+  cross-branch leakage; reproducible simulation runs.
+* Manual merge by default keeps the user in control of
+  destructive operations on the target DB.
+* `target_provenance` in conflict reports glues Simulation to
+  Provenance, exploiting the rest of the octad.
+
+### Negative
+
+* No CRDT means concurrent branches with overlapping writes
+  always require human resolution. Acceptable for the "what
+  if?" use case; would be painful for offline-first sync.
+* The "freeze at branch creation" rule means branches don't
+  auto-pick-up parent changes. Rebase as a separate operation
+  is out of scope for this ADR.
+* Merge against `main` touches the target DB, which means
+  Tier 1's "never write to target" claim is *narrower* than
+  it sounds: it holds for the Tier 1 concerns (provenance,
+  lineage, temporal, access-control) but not for Simulation
+  merges.
+
+### Neutral
+
+* The `verisimdb_simulation_deltas` table already exists with
+  the right shape (`branch_id`, `entity_id`, `table_name`,
+  `operation`, `delta_data`). No DDL change required.
+* The `verisimdb_simulation_branches.status` enum CHECK
+  (V-L2-J1) already constrains the lifecycle states. No DDL
+  change required.
+
+## Open questions
+
+* **OQ-1**: Should rebase be supported (port parent changes
+  into a long-lived branch)? Suggested follow-up ADR.
+* **OQ-2**: Cross-branch references — can a branch delta cite
+  an entity that only exists in a sibling branch? Currently
+  no; pinned here to avoid the open-ended semantics of
+  inter-branch dependencies.
+* **OQ-3**: Should merge produce a provenance entry in
+  `verisimdb_provenance_log` recording the merge operation
+  itself? Currently no — provenance is per-entity, not
+  per-merge. A meta-provenance layer would be a separate ADR.
+
+## Cross-references
+
+* ADR-0004 — concerns octad (Simulation is the 8th concern).
+* V-L2-J1 (#43) — FK + status enum CHECK on simulation tables
+  (already merged).
+* V-L2-P1 (#50) — retention; `simulation-days` field would be
+  a future extension.
+* `src/codegen/overlay.rs::generate_simulation_table` — DDL.
+* `src/main.rs` — CLI surface for `verisimiser simulate …`
+  (not yet implemented; awaits this ADR).
