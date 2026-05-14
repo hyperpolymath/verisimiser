@@ -4,35 +4,78 @@
 :toc:
 :icons: font
 
+The phases below are stated in terms of the *concerns* octad
+(Data, Metadata, Provenance, Lineage, Constraints, AccessControl,
+Temporal, Simulation) per `docs/decisions/ADR-0001-octad-ontology.adoc`.
+Tier 2 *modalities* (graph, vector, tensor, semantic, document, spatial)
+are independent overlay representations layered on top.
+
 == Phase 0: Scaffold (COMPLETE)
-* [x] RSR template with full CI/CD (17 workflows)
-* [x] CLI with subcommands (init, start, drift, provenance, history, status, octad)
-* [x] Manifest parser (verisimiser.toml with tier1/tier2 config)
-* [x] Tier 1 data types (DriftReport, ProvenanceRecord, TemporalVersion)
-* [x] ABI module stubs (Idris2 + Zig FFI)
-* [x] README with two-tier architecture and honest framing
 
-== Phase 1: PostgreSQL Tier 1 MVP
+* [x] RSR template with full CI/CD
+* [x] CLI with subcommands (init, generate, start, drift, provenance,
+  history, status, octad)
+* [x] Manifest parser (`verisimiser.toml` with `[octad]` toggles +
+  legacy `tier1`/`tier2` back-compat)
+* [x] ABI types in Rust (`src/abi/mod.rs`) + Idris2 declarations
+  (`src/interface/abi/`) + Zig FFI stubs (`src/interface/ffi/`)
+* [x] Codegen for sidecar overlay schema and query interceptor SQL
+* [x] README + ADRs covering octad ontology, verification tree,
+  Justfile recipes
+
+== Phase 1: SQLite Tier 1 MVP
+
+The shortest end-to-end loop: SQLite target, SQLite sidecar, provenance
++ temporal concerns. Sequencing follows the bottom-up issue plan in
+`docs/decisions/` (forthcoming).
+
+* [ ] SQLite interception via `sqlite3_update_hook`
+* [ ] Provenance sidecar — write-path observer, SHA-256 hash chain
+  covering operation + actor + before-snapshot + transformation (not
+  just operation + ts)
+* [ ] Temporal sidecar — version history, point-in-time read,
+  rollback, partial-unique-index enforcement of "exactly one current"
+* [ ] Property tests for hash-chain integrity, version ordering, and
+  sidecar isolation (Tier 1 never writes to target)
+* [ ] `verisimiser doctor` + `verisimiser validate` subcommands
+* [ ] Structured logging (`tracing`), `--log-format=json|pretty`
+
+== Phase 2: PostgreSQL Tier 1
+
 * [ ] PostgreSQL logical replication interception
-* [ ] Provenance sidecar (SQLite) — write-path observer
-* [ ] SHA-256 hash-chain integrity for provenance records
-* [ ] Temporal versioning sidecar — point-in-time queries
-* [ ] Cross-modal drift detection — read-path observer
-* [ ] Drift index with 8-category classification
-* [ ] Idris2 ABI proofs: sidecar isolation, hash-chain integrity, version ordering
-* [ ] Zig FFI bridge: database connection, overlay operations, VCL-total queries
-* [ ] End-to-end test: PostgreSQL -> verisimiser overlay -> VCL-total query
+* [ ] Provenance + temporal sidecars against PG target
+* [ ] Idris2 ABI proofs: sidecar isolation, hash-chain integrity,
+  version ordering
+* [ ] Zig FFI bridge: database connection, overlay operations
 
-== Phase 2: Multi-Backend Support
-* [ ] SQLite interception via sqlite3_update_hook / WAL monitoring
+== Phase 3: Multi-Backend Support
+
 * [ ] MongoDB interception via change streams
-* [ ] Redis interception via keyspace notifications
-* [ ] MySQL interception via binlog CDC
 * [ ] Application-level middleware / ORM hooks
 * [ ] Backend-agnostic interception trait abstraction
 * [ ] Per-backend integration tests
+* [ ] MySQL (binlog CDC) / Redis (keyspace notifications) — only if
+  there is real demand; the manifest enum currently excludes them.
 
-== Phase 3: Tier 2 Overlays
+== Phase 4: Constraints / Drift Detection
+
+* [ ] Per-category drift definition (one ADR per category)
+* [ ] First implemented category: Temporal drift (version skew —
+  cheapest to define and observe)
+* [ ] Drift index storage + query API
+* [ ] `verisimiser drift` subcommand wired to real measurements
+
+== Phase 5: AccessControl + Lineage
+
+* [ ] AccessControl model ADR: principals, role composition, deny vs
+  allow precedence, view interaction
+* [ ] Typed policy condition language (replace free-form SQL TEXT)
+* [ ] Lineage DAG enforcement: self-edge CHECK + cycle prevention
+  ADR
+* [ ] Lineage traversal subcommand (upstream/downstream)
+
+== Phase 6: Tier 2 Modality Overlays
+
 * [ ] Graph overlay (RDF triples / property graph edges)
 * [ ] Vector overlay (HNSW embedding similarity search)
 * [ ] Tensor overlay (ndarray multi-dimensional numeric data)
@@ -41,26 +84,37 @@
 * [ ] Spatial overlay (R-tree geospatial coordinates)
 * [ ] Independent enable/disable per overlay via manifest
 
-== Phase 4: VCL-total Integration
+== Phase 7: Simulation
+
+* [ ] Branching semantics ADR (isolation, merge policy, conflict
+  resolution)
+* [ ] FK enforcement on `simulation_branches.parent_branch`
+* [ ] `verisimiser simulate` subcommand
+
+== Phase 8: VCL-total Integration
+
 * [ ] VCL-total type-safe query parsing
-* [ ] Cross-tier queries (Tier 1 + Tier 2 in single query)
+* [ ] Cross-concern queries (Tier 1 + Tier 2 in single query)
 * [ ] TypedQLiser integration for compile-time query validation
 * [ ] Query planner for multi-sidecar operations
 * [ ] Performance benchmarks: overhead of augmentation layer
 
-== Phase 5: Production Hardening
-* [ ] Retention policies (auto-prune temporal history)
+== Phase 9: Production Hardening
+
+* [ ] Retention policies (`[retention]` section in manifest)
 * [ ] Sidecar compaction and garbage collection
-* [ ] Concurrent access safety (multi-writer provenance chains)
+* [ ] Concurrent access safety (multi-writer provenance chains —
+  per-entity serialisation + UNIQUE(entity_id, previous_hash))
 * [ ] Backup and restore for sidecars
 * [ ] Monitoring and alerting integration
 * [ ] Error recovery and graceful degradation
 * [ ] Shell completions (bash, zsh, fish)
 
-== Phase 6: Ecosystem
-* [ ] PanLL panel for drift monitoring dashboard
+== Phase 10: Ecosystem
+
 * [ ] BoJ-server cartridge (MCP integration)
-* [ ] SqueakWell integration (database recovery via cross-modal constraint propagation)
-* [ ] Migration tooling: Tier 1 -> Tier 2 -> full VeriSimDB
+* [ ] SqueakWell integration (database recovery via cross-concern
+  constraint propagation)
+* [ ] Migration tooling: Tier 1 → Tier 2 → full VeriSimDB
 * [ ] Publish to crates.io
 * [ ] Chainguard container image
