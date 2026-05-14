@@ -13,6 +13,7 @@
 //   - overlay: Generate sidecar schema DDL for enabled octad dimensions
 //   - query:   Generate query interceptor SQL for octad enrichment
 
+pub mod ident;
 pub mod overlay;
 pub mod parser;
 pub mod query;
