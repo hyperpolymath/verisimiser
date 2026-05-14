@@ -183,7 +183,6 @@ Your Application
 **Interception methods** (configurable per database):
 
 * **PostgreSQL**: logical replication / `pg_notify` / triggers
-* **MySQL**: binlog CDC / triggers
 * **SQLite**: `sqlite3_update_hook` / WAL monitoring
 * **MongoDB**: change streams
 * **Application-level**: middleware / ORM hooks
