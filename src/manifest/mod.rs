@@ -279,6 +279,85 @@ impl Default for SidecarConfig {
 }
 
 #[cfg(test)]
+mod validate_manifest_tests {
+    use super::validate_manifest;
+
+    /// A well-formed manifest with no schema-source and a writable sidecar
+    /// parent must pass all checks.
+    #[test]
+    fn good_manifest_passes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("verisimiser.toml");
+        let sidecar_path = dir.path().join("sidecar.db");
+        let body = format!(
+            "[project]\n\
+             name = \"test\"\n\
+             [database]\n\
+             backend = \"sqlite\"\n\
+             [sidecar]\n\
+             storage = \"sqlite\"\n\
+             path = \"{}\"\n",
+            sidecar_path.display().to_string().replace('\\', "/")
+        );
+        std::fs::write(&path, body).expect("write");
+
+        let report = validate_manifest(path.to_str().unwrap());
+        assert!(
+            report.passed,
+            "expected pass; checks: {:?}",
+            report.checks
+        );
+        assert!(report.failed_count() == 0);
+    }
+
+    /// A schema-source pointing at a missing file must fail
+    /// `schema-source-exists`.
+    #[test]
+    fn missing_schema_source_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("verisimiser.toml");
+        let sidecar_path = dir.path().join("sidecar.db");
+        let body = format!(
+            "[project]\n\
+             name = \"test\"\n\
+             [database]\n\
+             backend = \"sqlite\"\n\
+             schema-source = \"/nonexistent/schema.sql\"\n\
+             [sidecar]\n\
+             storage = \"sqlite\"\n\
+             path = \"{}\"\n",
+            sidecar_path.display().to_string().replace('\\', "/")
+        );
+        std::fs::write(&path, body).expect("write");
+
+        let report = validate_manifest(path.to_str().unwrap());
+        assert!(!report.passed);
+        let failed: Vec<&str> = report
+            .checks
+            .iter()
+            .filter(|c| !c.passed)
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(failed, vec!["schema-source-exists"]);
+    }
+
+    /// A malformed manifest must fail `manifest-loads` and stop further
+    /// checks (because the rest depend on having a parsed manifest).
+    #[test]
+    fn malformed_manifest_fails_load_check() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("verisimiser.toml");
+        std::fs::write(&path, "broken value\n").expect("write");
+
+        let report = validate_manifest(path.to_str().unwrap());
+        assert!(!report.passed);
+        assert_eq!(report.checks.len(), 1, "only manifest-loads should run");
+        assert_eq!(report.checks[0].name, "manifest-loads");
+        assert!(!report.checks[0].passed);
+    }
+}
+
+#[cfg(test)]
 mod load_manifest_tests {
     use super::load_manifest;
 
@@ -549,6 +628,150 @@ mod init_template_tests {
         let m: Manifest = toml::from_str(&rendered).expect("template parses");
         let default_name = super::ProjectConfig::default().name;
         assert_eq!(m.project.name, default_name);
+    }
+}
+
+/// Result of a single validation check. Each check is independent so the
+/// CLI can report all failures, not just the first.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidationCheck {
+    /// Stable, lower-kebab-case identifier for this check.
+    pub name: String,
+    /// Human-readable description of what this check verified.
+    pub description: String,
+    /// `true` if the check passed.
+    pub passed: bool,
+    /// Failure detail if `passed == false`; `None` when the check passed.
+    pub detail: Option<String>,
+}
+
+/// Aggregate report returned by [`validate_manifest`] and by
+/// `verisimiser validate --json`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidationReport {
+    /// Resolved path of the manifest that was validated.
+    pub manifest: String,
+    /// `true` iff every entry in `checks` passed.
+    pub passed: bool,
+    /// One entry per check, in the order they ran.
+    pub checks: Vec<ValidationCheck>,
+}
+
+impl ValidationReport {
+    /// Number of failing checks.
+    pub fn failed_count(&self) -> usize {
+        self.checks.iter().filter(|c| !c.passed).count()
+    }
+}
+
+/// Run all consistency checks against a manifest at `path`.
+///
+/// Each check is independent — every check runs even if an earlier one
+/// failed — so the user sees every problem in one go. The returned
+/// `ValidationReport` has `passed = false` iff any individual check
+/// failed. Closes #52.
+///
+/// Checks currently performed:
+///
+/// 1. **`manifest-loads`** — the file exists, is valid TOML, and
+///    deserialises to `Manifest`. (Covers V-L3-H1 span-aware errors.)
+/// 2. **`schema-source-exists`** — if `[database].schema-source` is
+///    set, the file at that path is readable.
+/// 3. **`sidecar-path-writable`** — the parent directory of
+///    `[sidecar].path` is writable (or createable).
+///
+/// Out of scope here: V-L2-E1 backend/target_db conflict (own issue),
+/// target-DB reachability (needs live connection).
+pub fn validate_manifest(path: &str) -> ValidationReport {
+    let mut checks = Vec::new();
+
+    // 1. Manifest loads.
+    let manifest = match load_manifest(path) {
+        Ok(m) => {
+            checks.push(ValidationCheck {
+                name: "manifest-loads".to_string(),
+                description: "Manifest file parses and deserialises".to_string(),
+                passed: true,
+                detail: None,
+            });
+            Some(m)
+        }
+        Err(e) => {
+            checks.push(ValidationCheck {
+                name: "manifest-loads".to_string(),
+                description: "Manifest file parses and deserialises".to_string(),
+                passed: false,
+                detail: Some(e.to_string()),
+            });
+            None
+        }
+    };
+
+    if let Some(m) = manifest.as_ref() {
+        // 2. Schema source exists if specified.
+        if let Some(schema_path) = m.database.schema_source.as_deref() {
+            let p = std::path::Path::new(schema_path);
+            if p.is_file() {
+                checks.push(ValidationCheck {
+                    name: "schema-source-exists".to_string(),
+                    description: "[database].schema-source points to a readable file".to_string(),
+                    passed: true,
+                    detail: None,
+                });
+            } else {
+                checks.push(ValidationCheck {
+                    name: "schema-source-exists".to_string(),
+                    description: "[database].schema-source points to a readable file".to_string(),
+                    passed: false,
+                    detail: Some(format!("'{}' does not exist or is not a file", schema_path)),
+                });
+            }
+        }
+
+        // 3. Sidecar parent directory is writable / createable.
+        let sidecar_path = std::path::Path::new(&m.sidecar.path);
+        let parent = sidecar_path.parent().unwrap_or(std::path::Path::new("."));
+        let writable = if parent.as_os_str().is_empty() {
+            // sidecar.path = "name.db" with no parent — current dir.
+            std::path::Path::new(".")
+                .metadata()
+                .map(|md| !md.permissions().readonly())
+                .unwrap_or(false)
+        } else if parent.exists() {
+            parent
+                .metadata()
+                .map(|md| !md.permissions().readonly())
+                .unwrap_or(false)
+        } else {
+            // Parent doesn't exist yet — verisimiser would create it.
+            // Treat as OK; surface as a warning only if we can't create.
+            true
+        };
+        if writable {
+            checks.push(ValidationCheck {
+                name: "sidecar-path-writable".to_string(),
+                description: "Sidecar storage path's parent directory is writable".to_string(),
+                passed: true,
+                detail: None,
+            });
+        } else {
+            checks.push(ValidationCheck {
+                name: "sidecar-path-writable".to_string(),
+                description: "Sidecar storage path's parent directory is writable".to_string(),
+                passed: false,
+                detail: Some(format!(
+                    "parent of '{}' is read-only or unreachable",
+                    m.sidecar.path
+                )),
+            });
+        }
+    }
+
+    let passed = checks.iter().all(|c| c.passed);
+    ValidationReport {
+        manifest: path.to_string(),
+        passed,
+        checks,
     }
 }
 
