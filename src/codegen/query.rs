@@ -121,7 +121,7 @@ fn build_entity_id_expr(pk_columns: &[&str], table_name: &str, backend: Database
         // No PK defined — fall back to internal row identifier.
         match backend {
             DatabaseBackend::SQLite => format!("{}.rowid", table_name),
-            DatabaseBackend::PostgreSQL => format!("{}::text", format!("{}.ctid", table_name)),
+            DatabaseBackend::PostgreSQL => format!("{}.ctid::text", table_name),
             DatabaseBackend::MongoDB => "CAST(_id AS TEXT)".to_string(),
         }
     } else if pk_columns.len() == 1 {
