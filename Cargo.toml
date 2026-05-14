@@ -21,6 +21,7 @@ anyhow = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [build-dependencies]
 chrono = "0.4"

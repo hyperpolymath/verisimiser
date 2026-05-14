@@ -10,6 +10,7 @@
 pub mod abi;
 pub mod codegen;
 pub mod doctor;
+pub mod gc;
 pub mod intercept;
 pub mod manifest;
 pub mod tier1;
