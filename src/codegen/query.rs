@@ -111,33 +111,53 @@ fn generate_table_interceptor(
     }
 }
 
-/// Build a SQL expression that computes a composite entity_id from PK columns.
+/// Build a SQL expression that uniquely identifies each row in a table.
 ///
-/// For single-column PKs: just CAST the column to TEXT.
-/// For composite PKs: concatenate with '::' separator.
-/// If no PK is defined, use ROWID (SQLite) or ctid (PostgreSQL).
+/// Encoding (collision-resistant by construction):
+///
+/// - **Single-column PK**: `CAST(col AS TEXT)`.
+/// - **Composite PK**: length-prefix encoding —
+///   `length(val)::text || ':' || val` per column, concatenated with no
+///   inter-column separator. The explicit lengths make column boundaries
+///   unambiguous, so a PK value containing `::` (or any other character)
+///   cannot collide with a different PK across rows.
+/// - **NULL** in any composite column encodes as the literal `'N'`, so
+///   NULL is distinguishable from the empty string (which encodes as
+///   `'0:'`) and from a literal `'N…'` value (which carries a length
+///   prefix). This also fixes the previous bug where Postgres `||`
+///   returned NULL for the whole expression on any NULL operand.
+/// - **No PK**: ROWID (SQLite) / ctid (PostgreSQL) / `_id` (MongoDB).
+///
+/// Closes #44.
 fn build_entity_id_expr(pk_columns: &[&str], table_name: &str, backend: DatabaseBackend) -> String {
     if pk_columns.is_empty() {
-        // No PK defined — fall back to internal row identifier.
-        match backend {
+        return match backend {
             DatabaseBackend::SQLite => format!("{}.rowid", table_name),
             DatabaseBackend::PostgreSQL => format!("{}.ctid::text", table_name),
             DatabaseBackend::MongoDB => "CAST(_id AS TEXT)".to_string(),
-        }
-    } else if pk_columns.len() == 1 {
-        format!("CAST({}.{} AS TEXT)", table_name, pk_columns[0])
-    } else {
-        // Composite PK: concatenate columns with '::' separator.
-        let parts: Vec<String> = pk_columns
-            .iter()
-            .map(|col| format!("CAST({}.{} AS TEXT)", table_name, col))
-            .collect();
-        match backend {
-            DatabaseBackend::PostgreSQL => parts.join(" || '::' || "),
-            DatabaseBackend::SQLite => parts.join(" || '::' || "),
-            DatabaseBackend::MongoDB => parts.join(" + '::' + "),
-        }
+        };
     }
+    if pk_columns.len() == 1 {
+        return format!("CAST({}.{} AS TEXT)", table_name, pk_columns[0]);
+    }
+
+    // Composite PK: length-prefix encoding, NULL-safe.
+    let concat = match backend {
+        DatabaseBackend::PostgreSQL | DatabaseBackend::SQLite => " || ",
+        DatabaseBackend::MongoDB => " + ",
+    };
+    let parts: Vec<String> = pk_columns
+        .iter()
+        .map(|col| {
+            format!(
+                "COALESCE(CAST(LENGTH(CAST({tn}.{col} AS TEXT)) AS TEXT){c}':'{c}CAST({tn}.{col} AS TEXT), 'N')",
+                tn = table_name,
+                col = col,
+                c = concat,
+            )
+        })
+        .collect();
+    parts.join(concat)
 }
 
 /// Generate a SQL view that enriches a table's rows with their latest
@@ -432,9 +452,46 @@ mod tests {
     fn test_entity_id_expr_composite_pk() {
         let expr =
             build_entity_id_expr(&["post_id", "tag_id"], "post_tags", DatabaseBackend::SQLite);
+        // Both columns are referenced.
         assert!(expr.contains("post_tags.post_id"));
         assert!(expr.contains("post_tags.tag_id"));
-        assert!(expr.contains("'::'"));
+        // Length-prefix encoding is in use.
+        assert!(expr.contains("LENGTH"));
+        assert!(expr.contains("':'"));
+        // NULL-safe via COALESCE → 'N'.
+        assert!(expr.contains("COALESCE"));
+        assert!(expr.contains("'N'"));
+        // The old ambiguous `::` separator is gone.
+        assert!(!expr.contains("'::'"));
+    }
+
+    /// Length-prefix encoding must distinguish PKs that the old `::`
+    /// separator collapsed into the same string. Verified at the
+    /// **expression-shape** level: distinct PK column sets produce
+    /// distinct generated SQL, and the per-column emitted expression
+    /// is always length-prefixed regardless of value content.
+    #[test]
+    fn test_entity_id_expr_composite_no_separator_collision() {
+        let two = build_entity_id_expr(&["a", "b"], "t", DatabaseBackend::PostgreSQL);
+        let three = build_entity_id_expr(&["a", "b", "c"], "t", DatabaseBackend::PostgreSQL);
+        // Different column counts produce different shapes.
+        assert_ne!(two, three);
+        // Each column gets its own length-prefix block.
+        assert_eq!(two.matches("LENGTH").count(), 2);
+        assert_eq!(three.matches("LENGTH").count(), 3);
+        // No `::` separator anywhere — that ambiguity is gone.
+        assert!(!two.contains("'::'"));
+    }
+
+    #[test]
+    fn test_entity_id_expr_composite_mongodb_uses_plus_concat() {
+        let expr =
+            build_entity_id_expr(&["account_id", "txn_id"], "ledger", DatabaseBackend::MongoDB);
+        assert!(expr.contains("ledger.account_id"));
+        assert!(expr.contains("ledger.txn_id"));
+        // MongoDB concat operator is `+`, not `||`.
+        assert!(expr.contains(" + "));
+        assert!(!expr.contains(" || "));
     }
 
     #[test]
