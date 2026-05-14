@@ -17,7 +17,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use verisimiser::{abi, codegen, doctor, gc, manifest};
+use verisimiser::{abi, codegen, doctor, gc, manifest, tier1};
 
 /// Long version string: `<crate-version> (<git-describe>, built <date>)`.
 const LONG_VERSION: &str = concat!(
@@ -212,9 +212,42 @@ fn main() -> Result<()> {
             manifest,
             threshold,
         } => {
-            let _m = manifest::load_manifest(&manifest)?;
-            println!("Checking cross-modal drift (threshold: {})...", threshold);
-            // TODO: query drift index
+            let m = manifest::load_manifest(&manifest)?;
+            if m.sidecar.storage != "sqlite" {
+                anyhow::bail!(
+                    "verisimiser drift currently only supports the SQLite \
+                     sidecar backend; [sidecar].storage is {:?}",
+                    m.sidecar.storage
+                );
+            }
+            let conn = rusqlite::Connection::open(&m.sidecar.path)?;
+            // Distinct entity_ids that have at least one row in temporal_versions.
+            let mut stmt = conn
+                .prepare("SELECT DISTINCT entity_id FROM verisimdb_temporal_versions")?;
+            let entities: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<_>>()?;
+
+            println!("Checking Temporal drift (threshold: {})...", threshold);
+            let mut reported = 0usize;
+            for entity in &entities {
+                let Some(report) = tier1::drift::detect_temporal_drift(&conn, entity)? else {
+                    continue;
+                };
+                if report.overall_score >= threshold {
+                    println!(
+                        "  {} drift={:.3}",
+                        report.entity_id, report.overall_score
+                    );
+                    reported += 1;
+                }
+            }
+            println!(
+                "Scanned {} entit{}; {} above threshold.",
+                entities.len(),
+                if entities.len() == 1 { "y" } else { "ies" },
+                reported
+            );
             Ok(())
         }
 
