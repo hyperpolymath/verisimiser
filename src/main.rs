@@ -133,21 +133,18 @@ fn main() -> Result<()> {
         }
 
         Commands::Start { manifest } => {
-            let m = manifest::load_manifest(&manifest)?;
-            let name = if !m.project.name.is_empty() {
-                &m.project.name
-            } else {
-                &m.verisimiser.name
-            };
-            let backend = m.database.effective_backend();
-            println!(
-                "Starting VeriSimiser augmentation for {} ({})",
-                name, backend
+            // Load the manifest so config errors still surface, but refuse
+            // to claim we started the daemon. The interception daemon is
+            // tracked by V-L1-C1 (hyperpolymath/verisimiser#46); until it
+            // lands, an explicit refusal is less misleading than a silent
+            // print-and-exit that implies the augmentation is running.
+            let _m = manifest::load_manifest(&manifest)?;
+            anyhow::bail!(
+                "verisimiser start: the augmentation daemon is not yet \
+                 implemented. Manifest at {} parsed successfully, but no \
+                 interception is running. Tracked by V-L1-C1 (issue #46).",
+                manifest
             );
-            println!("  Octad: {}/8 dimensions enabled", m.octad.enabled_count());
-            println!("  Sidecar: {} ({})", m.sidecar.path, m.sidecar.storage);
-            // TODO: start interception daemon
-            Ok(())
         }
 
         Commands::Drift {
