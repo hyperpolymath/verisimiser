@@ -1,0 +1,244 @@
+= Architecture Decision Record: 0003-drift-categories
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 3. Eight drift categories: input, distance, threshold
+
+Date: 2026-05-14
+
+## Status
+
+Accepted
+
+## Context
+
+`src/tier1/drift.rs::DriftCategory` enumerates eight cross-modal drift
+categories. The names are evocative but unimplementable: a detector
+needs three things per category — what inputs to compare, how to
+score the comparison, where to draw the line. Without that triple
+fixed in writing, every detector implementation is guessing, and
+two implementations of "Temporal drift" can disagree about whether
+a given pair of inputs is drifted.
+
+This ADR pins the triple for each of the eight categories. It is
+binding for V-L1-E2 (temporal detector, the cheapest first) and
+every subsequent V-L1-E* detector.
+
+## Decision
+
+Each category is defined by:
+
+* **Input type** — the two artifacts being compared.
+* **Distance function** — total order on `[0.0, 1.0]` where `0.0`
+  means "no drift" and `1.0` means "maximally drifted". Composability
+  matters: an aggregator can take a weighted sum of per-category
+  scores and still produce a value in the same range.
+* **Threshold range** — the default cutoff above which an entity is
+  reported as drifted in this category. Configurable per deployment
+  via the `--threshold` flag on `verisimiser drift`.
+
+### 3.1 Temporal (cheapest; ship first via V-L1-E2)
+
+* **Input**: two `(version, valid_from, valid_to)` triples from
+  `verisimdb_temporal_versions` for the same entity across two
+  modalities (e.g. the graph copy and the document copy).
+* **Distance**:
++
+[source]
+----
+score = clamp01(|v_a.version - v_b.version| / max(v_a.version, v_b.version, 1))
+----
++
+Pure ordering math; no payload comparison.
+* **Threshold default**: `0.1` (within 10% of each other).
+* **Example**: `(v=5, …)` vs `(v=4, …)` → `|5-4|/5 = 0.2` → drifted.
+  `(v=10, …)` vs `(v=9, …)` → `|10-9|/10 = 0.1` → at threshold.
+
+### 3.2 Structural
+
+* **Input**: schema fingerprints of two modalities at the same
+  point in time. Fingerprint = sorted list of `(field, type)` pairs.
+* **Distance**:
++
+[source]
+----
+score = 1 - jaccard(fp_a, fp_b)
+      = 1 - |fp_a ∩ fp_b| / |fp_a ∪ fp_b|
+----
+* **Threshold default**: `0.05`. Schemas should be near-identical;
+  any divergence is a red flag.
+* **Example**: graph copy has `{(id, int), (title, text)}`, document
+  copy has `{(id, int), (title, text), (body, text)}`. Intersection
+  size 2, union size 3 → `1 - 2/3 = 0.33` → strongly drifted.
+
+### 3.3 Semantic
+
+* **Input**: free-text descriptions or labels stored alongside the
+  entity in two modalities. (e.g. graph node label vs document title.)
+* **Distance**:
++
+[source]
+----
+score = 1 - cosine(embed(text_a), embed(text_b))
+      where embed() = sentence embedding (model TBD; pluggable)
+----
++
+Cosine of two unit vectors is in `[-1, 1]`; we clamp to `[0, 1]`
+by `(1 - cos) / 2` if needed, but in practice sentence embeddings
+keep cosine in `[0, 1]`.
+* **Threshold default**: `0.20`.
+* **Example**: `"Big Launch Today"` vs `"Today: Big Launch"` →
+  cosine ≈ 0.98 → score 0.02 → not drifted.
+  `"Big Launch Today"` vs `"Q3 earnings missed"` →
+  cosine ≈ 0.15 → score 0.85 → strongly drifted.
+
+### 3.4 Statistical
+
+* **Input**: two distributions over the same numeric / categorical
+  field, sampled from two modalities at the same point in time.
+  Continuous → KDE; discrete → multinomial histogram.
+* **Distance**:
++
+[source]
+----
+score = wasserstein_1(dist_a, dist_b) / range(field)
+        # 1-Wasserstein, also known as Earth-Mover's Distance.
+        # Dividing by field range normalises to [0,1] for bounded fields.
+----
++
+For unbounded fields, use `tanh(wasserstein_1 / scale)` with scale
+fixed in the deployment config.
+* **Threshold default**: `0.15`.
+* **Example**: vector modality reports a feature mean of `0.5`,
+  tensor modality reports `0.7`, field range `[0, 1]`. EMD ≈ 0.2,
+  normalised → 0.2 → drifted.
+
+### 3.5 Referential
+
+* **Input**: set of foreign-key / cross-reference edges in modality A
+  versus modality B for the same entity. (e.g. graph adjacency vs
+  document cross-references.)
+* **Distance**:
++
+[source]
+----
+score = 1 - jaccard(edges_a, edges_b)
+----
++
+Same shape as Structural but applied to the *edge* set rather than
+the *attribute* set.
+* **Threshold default**: `0.10`.
+* **Example**: graph says `entity-A → {entity-B, entity-C}`, document
+  says cross-references `{entity-B}`. Jaccard `1/2 = 0.5`. Score
+  `1 - 0.5 = 0.5` → strongly drifted.
+
+### 3.6 Provenance
+
+* **Input**: provenance chain tip hash in modality A versus
+  modality B for the same entity. (Each modality may have its own
+  hash chain in the sidecar; this category reports cross-chain drift.)
+* **Distance**:
++
+[source]
+----
+score = if tip_a == tip_b { 0.0 }
+        else { 1.0 - (longest_common_prefix(chain_a, chain_b)
+                      / max(len(chain_a), len(chain_b))) }
+----
++
+Binary in the easy case, fractional when chains share a prefix but
+have diverged.
+* **Threshold default**: `0.05`. Provenance divergence is almost
+  always a real problem.
+* **Example**: chain A has 10 entries, chain B has 10 entries, they
+  share the first 7. Score `1 - 7/10 = 0.3` → drifted.
+
+### 3.7 Spatial
+
+* **Input**: geographic / coordinate representations of an entity
+  in two modalities. Either `(lat, lon)` pairs or a richer geometry.
+* **Distance**:
++
+[source]
+----
+score = haversine(coord_a, coord_b) / max_radius
+        # max_radius default: half-earth-circumference ≈ 20000 km
+        # producing the same [0,1] range as the other categories.
+----
++
+Geometry-richer inputs reduce to centroids before measurement;
+shape mismatch is reported separately under Structural.
+* **Threshold default**: `0.0001` (about 2 km).
+* **Example**: graph stores `(51.5074, -0.1278)` (London), document
+  stores `(51.5081, -0.1290)`. Haversine ≈ 0.13 km. Normalised
+  `0.13 / 20000 ≈ 6.5e-6` → not drifted.
+
+### 3.8 Embedding
+
+* **Input**: vector embedding stored in the vector modality versus
+  a freshly recomputed embedding from the document-modality source
+  text. Catches stale vectors after document edits.
+* **Distance**:
++
+[source]
+----
+score = 1 - cosine(stored_vec, recomputed_vec)
+----
++
+Same shape as Semantic but the comparands are vectors, not text.
+The implementation may skip recomputation if the document
+modality's `version` hasn't advanced past the vector's
+`vector_version_seen` watermark.
+* **Threshold default**: `0.10`.
+* **Example**: stored vector cosine-similarity 0.92 with recomputed
+  vector → score `0.08` → at threshold.
+
+## Consequences
+
+### Positive
+
+* Each detector implementation has an unambiguous specification.
+  Two implementers ship the same numeric output for the same input.
+* The aggregator (`DriftReport::overall_score`) can take a weighted
+  sum across categories without re-normalising — every category
+  produces `[0, 1]`.
+* The CLI's `--threshold` flag has a well-defined meaning per
+  category; users can override on a per-category basis without
+  guessing what "drift score 0.2" means.
+* `verisimiser doctor` can verify the threshold defaults are
+  configured consistently across deployments.
+
+### Negative
+
+* Semantic and Embedding require a choice of embedding model. The
+  ADR leaves the model TBD; that choice is OQ-1 for the future.
+* Statistical's threshold for *unbounded* numeric fields requires
+  a per-field scale constant. Deployments must configure this; we
+  cannot pick a one-size-fits-all default.
+* Wasserstein-1 is more expensive than KL-divergence for large
+  distributions. Detector implementations may need to subsample.
+
+### Neutral
+
+* Temporal stays unimplemented today. V-L1-E2 picks it up first
+  precisely because the math is the cheapest.
+* The eight categories may later collapse — e.g. Embedding might
+  fold into Semantic if the embedding model becomes the same. The
+  ADR is the only place to record that choice.
+
+## Open questions (track separately)
+
+* **OQ-1**: Which sentence embedding model for Semantic and
+  Embedding? Trade-off: model size vs. quality vs. licensing.
+  Suggested follow-up ADR.
+* **OQ-2**: Per-field scale config for unbounded numeric fields in
+  Statistical. Stored where in the manifest?
+* **OQ-3**: Drift report retention. Per V-L2-P1 the provenance log
+  has a retention bound; drift reports might warrant their own.
+
+## Cross-references
+
+* V-L1-E2 (issue #49) implements the Temporal detector first.
+* V-L1-B1 / `docs/theory/provenance-threat-model.adoc` constrains
+  what the Provenance drift category can claim under adversary.
+* `src/tier1/drift.rs::DriftCategory` is the canonical enum.
