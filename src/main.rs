@@ -17,7 +17,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use verisimiser::{abi, codegen, manifest};
+use verisimiser::{abi, codegen, doctor, manifest};
 
 /// Long version string: `<crate-version> (<git-describe>, built <date>)`.
 const LONG_VERSION: &str = concat!(
@@ -111,6 +111,16 @@ enum Commands {
     Validate {
         #[arg(short, long, default_value = "verisimiser.toml")]
         manifest: String,
+        /// Emit the structured ValidationReport as JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Environment-level diagnostics (toolchain, PATH, cwd). Optionally
+    /// also runs the manifest checks from `validate`.
+    Doctor {
+        /// If supplied, also run `validate` checks against this manifest.
+        #[arg(short, long)]
+        manifest: Option<String>,
         /// Emit the structured ValidationReport as JSON instead of text.
         #[arg(long)]
         json: bool,
@@ -236,32 +246,12 @@ fn main() -> Result<()> {
 
         Commands::Validate { manifest, json } => {
             let report = manifest::validate_manifest(&manifest);
-            if json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            } else {
-                println!("Validating {} ...", report.manifest);
-                for check in &report.checks {
-                    let mark = if check.passed { "ok " } else { "FAIL" };
-                    println!("  [{}] {} — {}", mark, check.name, check.description);
-                    if let Some(detail) = &check.detail {
-                        println!("        {}", detail);
-                    }
-                }
-                if report.passed {
-                    println!("All {} checks passed.", report.checks.len());
-                } else {
-                    println!(
-                        "{}/{} checks failed.",
-                        report.failed_count(),
-                        report.checks.len()
-                    );
-                }
-            }
-            if report.passed {
-                Ok(())
-            } else {
-                anyhow::bail!("manifest validation failed");
-            }
+            emit_report(&report, json, "manifest validation")
+        }
+
+        Commands::Doctor { manifest, json } => {
+            let report = doctor::run_doctor(manifest.as_deref());
+            emit_report(&report, json, "doctor")
         }
 
         Commands::Version { json } => {
@@ -278,6 +268,42 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+/// Render a `ValidationReport` (from `validate` or `doctor`) and exit
+/// non-zero if any check failed. Plain-text by default; JSON when
+/// `json == true`.
+fn emit_report(
+    report: &manifest::ValidationReport,
+    json: bool,
+    kind: &str,
+) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+    } else {
+        println!("Running {} for {} ...", kind, report.manifest);
+        for check in &report.checks {
+            let mark = if check.passed { "ok " } else { "FAIL" };
+            println!("  [{}] {} — {}", mark, check.name, check.description);
+            if let Some(detail) = &check.detail {
+                println!("        {}", detail);
+            }
+        }
+        if report.passed {
+            println!("All {} checks passed.", report.checks.len());
+        } else {
+            println!(
+                "{}/{} checks failed.",
+                report.failed_count(),
+                report.checks.len()
+            );
+        }
+    }
+    if report.passed {
+        Ok(())
+    } else {
+        anyhow::bail!("{} failed", kind);
     }
 }
 
