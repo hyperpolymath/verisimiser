@@ -16,28 +16,79 @@ permissions:
 
 jobs:
   build:
-    name: Build Artifacts
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive_ext: tar.gz
+            bin_ext: ''
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive_ext: tar.gz
+            bin_ext: ''
+            use_cross: true
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive_ext: tar.gz
+            bin_ext: ''
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive_ext: zip
+            bin_ext: '.exe'
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Build
-        run: |
-          echo "Build your artifacts here"
-          # TODO: Replace with your build commands
-          # Examples:
-          #   cargo build --release
-          #   zig build -Doptimize=ReleaseFast
-          #   gleam build
-          #   mix release
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # pinned
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
 
-      # TODO: Upload build artifacts if needed
-      # - uses: actions/upload-artifact@v4
-      #   with:
-      #     name: release-artifacts
-      #     path: target/release/
+      - name: Install cross (linux-aarch64 only)
+        if: matrix.use_cross
+        run: cargo install cross --locked --version '~0.2'
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target "${{ matrix.target }}"
+          else
+            cargo build --release --target "${{ matrix.target }}"
+          fi
+
+      - name: Package archive
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/verisimiser${{ matrix.bin_ext }}"
+          STAGE="verisimiser-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/"
+          cp LICENSE "$STAGE/" || true
+          cp README.adoc "$STAGE/" || true
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            7z a "$STAGE.zip" "$STAGE"
+            echo "ARTIFACT=$STAGE.zip" >> "$GITHUB_ENV"
+          else
+            tar -czf "$STAGE.tar.gz" "$STAGE"
+            echo "ARTIFACT=$STAGE.tar.gz" >> "$GITHUB_ENV"
+          fi
+          ( cd . && sha256sum "$ARTIFACT" 2>/dev/null || shasum -a 256 "$ARTIFACT" ) > "$ARTIFACT.sha256"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT }}.sha256
+          retention-days: 7
 
   changelog:
     name: Generate Changelog
@@ -93,11 +144,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # TODO: Download build artifacts if uploading to the release
-      # - uses: actions/download-artifact@v4
-      #   with:
-      #     name: release-artifacts
-      #     path: artifacts/
+      - name: Download all build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+          pattern: release-*
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
@@ -106,9 +158,10 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
           generate_release_notes: false
-          # TODO: Add artifact files to the release
-          # files: |
-          #   artifacts/*
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/*.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
