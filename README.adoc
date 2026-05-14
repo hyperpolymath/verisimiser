@@ -26,22 +26,27 @@ therefore split into two tiers:
   storage alongside your database. These are honest about being "VeriSimDB
   with your database as one backend" rather than pretending to be invisible.
 
-== VeriSimDB's Octad: Eight Modalities
+== VeriSimDB's Octad: Eight Concerns
 
-Each entity in VeriSimDB exists simultaneously across up to 8 representations:
+Each entity in a VeriSimDB-augmented database is enriched along 8
+concerns — properties you want to know or enforce about the data,
+independent of how it is stored. (Per `docs/decisions/0004-octad-ontology.adoc`.
+The earlier "Eight Modalities" framing — graph, vector, tensor, …
+— is reframed as a set of *Tier 2 overlays*, not the top-level
+identity; see "Tier 2" below.)
 
-[cols="1,2,1,1"]
+[cols="1,3,1"]
 |===
-| Modality | Purpose | Storage | VeriSimiser Tier
+| Concern | What it answers | VeriSimiser Tier
 
-| **Graph** | RDF triples and property graph edges | Pure Rust | Tier 2
-| **Vector** | Embeddings for similarity search | HNSW | Tier 2
-| **Tensor** | Multi-dimensional numeric data | ndarray/Burn | Tier 2
-| **Semantic** | Type annotations and CBOR proof blobs | CBOR | Tier 2
-| **Document** | Full-text searchable content | Tantivy | Tier 2
-| **Temporal** | Version history and time-series | chrono | Tier 1 ✓
-| **Provenance** | Origin tracking and transformation chain | SHA-256 hash-chain | Tier 1 ✓
-| **Spatial** | Geospatial coordinates and geometries | R-tree | Tier 2
+| **Data**          | The original rows in your database. | Always on (your DB)
+| **Metadata**      | Schema and type information. | Always on (introspection)
+| **Provenance**    | "Who did what, when, and how?" — SHA-256 hash-chained audit. | Tier 1 ✓
+| **Lineage**       | "Where did this come from?" — DAG of data derivations. | Tier 1 ✓
+| **Constraints**   | "Does this still hold?" — invariant enforcement across concerns. | Tier 1 ✓
+| **AccessControl** | "Who is allowed to see/change this?" — row/column policies. | Tier 1 ✓
+| **Temporal**      | "What did this look like at time T?" — version history + point-in-time queries. | Tier 1 ✓
+| **Simulation**    | "What if we changed this?" — sandbox branches that do not touch the main data. | Tier 2
 |===
 
 == Tier 1: True Piggybacks
