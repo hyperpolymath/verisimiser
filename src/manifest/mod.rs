@@ -466,6 +466,72 @@ mod init_template_tests {
     }
 }
 
+/// Documented JSON schema returned by `verisimiser status --json`.
+///
+/// Field stability: `name`, `backend`, `sidecar_path`, `sidecar_storage`,
+/// and `octad` are part of the public schema. New fields may be added
+/// in minor versions; existing fields will not be removed without a
+/// major version bump.
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusReport {
+    /// Project name (`[project].name` or legacy `[verisimiser].name`).
+    pub name: String,
+    /// Effective database backend after legacy field resolution.
+    pub backend: String,
+    /// Path to the sidecar storage file.
+    pub sidecar_path: String,
+    /// Sidecar storage technology.
+    pub sidecar_storage: String,
+    /// Per-dimension enablement.
+    pub octad: OctadStatus,
+}
+
+/// Per-dimension boolean view used by `StatusReport`.
+#[derive(Debug, Clone, Serialize)]
+pub struct OctadStatus {
+    /// Number of enabled dimensions (always in `2..=8`).
+    pub enabled_count: usize,
+    /// Always `true`.
+    pub data: bool,
+    /// Always `true`.
+    pub metadata: bool,
+    pub provenance: bool,
+    pub lineage: bool,
+    pub constraints: bool,
+    pub access_control: bool,
+    pub temporal: bool,
+    pub simulation: bool,
+}
+
+/// Build a [`StatusReport`] from a loaded manifest.
+///
+/// Used by `verisimiser status --json`. The same content is rendered as
+/// plain text by [`print_status`].
+pub fn status_report(manifest: &Manifest) -> StatusReport {
+    let name = if !manifest.project.name.is_empty() {
+        manifest.project.name.clone()
+    } else {
+        manifest.verisimiser.name.clone()
+    };
+    StatusReport {
+        name,
+        backend: manifest.database.effective_backend().to_string(),
+        sidecar_path: manifest.sidecar.path.clone(),
+        sidecar_storage: manifest.sidecar.storage.clone(),
+        octad: OctadStatus {
+            enabled_count: manifest.octad.enabled_count(),
+            data: true,
+            metadata: true,
+            provenance: manifest.octad.enable_provenance,
+            lineage: manifest.octad.enable_lineage,
+            constraints: manifest.octad.enable_constraints,
+            access_control: manifest.octad.enable_access_control,
+            temporal: manifest.octad.enable_temporal,
+            simulation: manifest.octad.enable_simulation,
+        },
+    }
+}
+
 /// Print a human-readable status summary of a loaded manifest.
 pub fn print_status(manifest: &Manifest) {
     let name = if !manifest.project.name.is_empty() {
