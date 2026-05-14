@@ -1,0 +1,122 @@
+= Architecture Decision Record: 0005-lineage-acyclicity
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 5. Lineage is enforced as a DAG at write time
+
+Date: 2026-05-14
+
+## Status
+
+Accepted
+
+## Context
+
+`README.adoc` and `src/abi/mod.rs::LineageEdge` describe the
+lineage representation as a **DAG** of data derivations. Until
+V-L2-I1 (#42) closed self-loops at the storage layer, *nothing*
+in the system enforced that claim. After #42, a single-hop
+self-loop is rejected by a CHECK constraint, but multi-hop
+cycles (A → B → A, A → B → C → A, …) still slip through both
+the SQL DDL and the application code.
+
+The lineage table just stores edges; cycles only matter if a
+consumer of the table tries to traverse them. Today no consumer
+does — the lineage graph is write-only — so the cost of a cycle
+is invisible. But every traversal we plan (V-L1-D2 lineage
+queries, V-L1-D3 impact-analysis, the upcoming `verisimiser
+provenance --transitive` mode) eventually needs an acyclicity
+invariant or it will hang / produce wrong answers.
+
+Two coherent choices exist:
+
+1. **Enforce DAG** — refuse inserts that would create a cycle.
+   Pay the write-time cost (a per-insert reachability check); get
+   correctness-by-construction for every future traversal.
+2. **Rename to "Lineage Graph"** — drop the "DAG" claim; document
+   that consumers must defend against cycles themselves. Cheaper
+   writes; every traversal pays the cost forever.
+
+## Decision
+
+**Enforce DAG at the application write path.** Reject any insert
+where `(source, target)` would close a cycle in
+`verisimdb_lineage_graph`.
+
+Implementation outline (for the V-L1-G2 follow-up):
+
+* Before inserting an edge `(s, t, …)`, run a reachability check
+  from `t` to `s` over existing edges. If `t` can reach `s`, the
+  new edge would close a cycle; refuse with a typed error
+  carrying the offending path.
+* Reachability is a transitive-closure query. SQLite ≥ 3.8.3 and
+  PostgreSQL both support recursive CTEs; verisimiser emits the
+  query at codegen time so the cost stays in SQL.
+* Concurrent inserts must serialise on the cycle check or the
+  invariant can be lost between read and write. V-L2-L1 (#31)
+  already constrains chain forks via per-entity serialisation;
+  this ADR extends the same pattern to the lineage table.
+
+Storage layer keeps the existing single-hop CHECK (#42) as the
+last line of defence in case the application path is bypassed.
+
+### Alternative considered
+
+Rename to "Lineage Graph" and ship cycles. Rejected because:
+
+* Every documented use of lineage (where-from, what-affects-this,
+  impact-analysis) needs acyclicity for soundness. Pushing the
+  burden to consumers means every future query is harder to
+  write and easier to get wrong.
+* The write-time cost of a recursive CTE on the typical lineage
+  table (sparse, low fan-out per entity) is negligible. The
+  read-time cost of defending against cycles in every consumer is
+  not.
+* The "DAG" claim is already public (README); silently weakening
+  it to "Graph" is a downgrade users would notice.
+
+### Alternative considered (also rejected)
+
+Enforce in SQL only via triggers. Rejected because:
+
+* Triggers do not work uniformly across SQLite/PostgreSQL/
+  MongoDB; the codegen layer would have to ship three flavours.
+* Application-level enforcement gives a structured error type
+  carrying the cycle path, useful for tooling. Triggers can't
+  easily return that.
+
+## Consequences
+
+### Positive
+
+* Every future traversal can assume acyclicity. No defensive
+  cycle-breaking in consumers; queries are simpler and faster.
+* The README's "DAG" claim becomes truthful.
+* `verisimiser doctor` can add a `lineage-acyclic` check that
+  surveys existing rows and confirms the invariant holds.
+
+### Negative
+
+* Writes are O(reachable subgraph from target) rather than O(1).
+  Pathological wide graphs make writes slower. Sparse lineage
+  is the expected case, but we should monitor.
+* Concurrent inserts that race to close the same cycle: one
+  succeeds, one fails. Need a clear error message.
+
+### Neutral
+
+* The single-hop CHECK (#42) still fires for the simplest case
+  and gives a fast-path error.
+
+## Cross-references
+
+* V-L2-I1 (#42) — single-hop self-reference CHECK (already
+  merged).
+* V-L1-G2 (to be filed) — implementation of the multi-hop
+  cycle check.
+* V-L2-L1 (#31) — per-entity write serialisation; same pattern
+  applies here.
+* `src/codegen/overlay.rs::generate_lineage_table` — where the
+  storage-layer single-hop CHECK lives.
+* `src/abi/mod.rs::LineageEdge` — where the application-layer
+  cycle check will be added.
