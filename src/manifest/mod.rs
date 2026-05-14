@@ -149,6 +149,10 @@ pub struct OctadConfig {
     #[serde(rename = "enable-access-control", default = "default_true")]
     pub enable_access_control: bool,
 
+    /// Enable cross-dimensional invariant enforcement.
+    #[serde(rename = "enable-constraints", default = "default_true")]
+    pub enable_constraints: bool,
+
     /// Enable simulation/sandbox mode (what-if queries on branched data).
     #[serde(rename = "enable-simulation", default)]
     pub enable_simulation: bool,
@@ -161,13 +165,18 @@ impl Default for OctadConfig {
             enable_lineage: true,
             enable_temporal: true,
             enable_access_control: true,
+            enable_constraints: true,
             enable_simulation: false,
         }
     }
 }
 
 impl OctadConfig {
-    /// Returns the count of enabled octad dimensions (always includes data + metadata = 2).
+    /// Returns the count of enabled octad dimensions.
+    ///
+    /// Data and metadata are always enabled (the two inherent dimensions);
+    /// the other six are toggled via their `enable_*` fields. Result is
+    /// guaranteed to be in `2..=8`.
     pub fn enabled_count(&self) -> usize {
         let mut count = 2; // data + metadata are always present
         if self.enable_provenance {
@@ -182,14 +191,66 @@ impl OctadConfig {
         if self.enable_access_control {
             count += 1;
         }
+        if self.enable_constraints {
+            count += 1;
+        }
         if self.enable_simulation {
             count += 1;
         }
-        // constraints is implied when any other dimension is enabled
-        if count > 2 {
-            count += 1;
-        } // constraints
         count
+    }
+}
+
+#[cfg(test)]
+mod octad_tests {
+    use super::OctadConfig;
+
+    /// `enabled_count` must always fall in `2..=8` regardless of which
+    /// togglable dimensions are on. Exhaustively check all 2^6 = 64
+    /// combinations of the six togglable flags.
+    #[test]
+    fn enabled_count_is_in_range_2_to_8() {
+        for bits in 0u8..(1 << 6) {
+            let cfg = OctadConfig {
+                enable_provenance: bits & 0b000001 != 0,
+                enable_lineage: bits & 0b000010 != 0,
+                enable_temporal: bits & 0b000100 != 0,
+                enable_access_control: bits & 0b001000 != 0,
+                enable_constraints: bits & 0b010000 != 0,
+                enable_simulation: bits & 0b100000 != 0,
+            };
+            let n = cfg.enabled_count();
+            assert!(
+                (2..=8).contains(&n),
+                "bits={bits:06b} produced enabled_count={n}, expected 2..=8"
+            );
+        }
+    }
+
+    #[test]
+    fn enabled_count_with_all_off_is_two() {
+        let cfg = OctadConfig {
+            enable_provenance: false,
+            enable_lineage: false,
+            enable_temporal: false,
+            enable_access_control: false,
+            enable_constraints: false,
+            enable_simulation: false,
+        };
+        assert_eq!(cfg.enabled_count(), 2);
+    }
+
+    #[test]
+    fn enabled_count_with_all_on_is_eight() {
+        let cfg = OctadConfig {
+            enable_provenance: true,
+            enable_lineage: true,
+            enable_temporal: true,
+            enable_access_control: true,
+            enable_constraints: true,
+            enable_simulation: true,
+        };
+        assert_eq!(cfg.enabled_count(), 8);
     }
 }
 
@@ -328,6 +389,7 @@ enable-provenance = true
 enable-lineage = true
 enable-temporal = true
 enable-access-control = true
+enable-constraints = true
 enable-simulation = {enable_simulation}
 
 [sidecar]
@@ -383,7 +445,7 @@ pub fn print_status(manifest: &Manifest) {
     );
     println!(
         "  Constraints:    {}",
-        if manifest.octad.enabled_count() > 2 {
+        if manifest.octad.enable_constraints {
             "ON"
         } else {
             "off"
