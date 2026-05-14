@@ -139,6 +139,10 @@ fn generate_provenance_table() -> String {
 /// Together, these edges form a DAG that can be traversed to answer
 /// "where did this data come from?" and "what is affected if this changes?"
 fn generate_lineage_table() -> String {
+    // The CHECK constraint refuses edges whose source and target are the
+    // same (entity, table) pair — i.e. self-loops, which would falsify
+    // the README's "DAG" claim at the structural level. Closes #42.
+    // (Multi-hop cycle prevention is a runtime concern tracked separately.)
     "-- Lineage: data derivation DAG\n\
      CREATE TABLE IF NOT EXISTS verisimdb_lineage_graph (\n\
      \x20   edge_id         TEXT PRIMARY KEY,\n\
@@ -148,7 +152,8 @@ fn generate_lineage_table() -> String {
      \x20   target_table    TEXT NOT NULL,\n\
      \x20   derivation_type TEXT NOT NULL,  -- copy, transform, aggregate, join, filter\n\
      \x20   description     TEXT,\n\
-     \x20   created_at      TEXT NOT NULL   -- ISO 8601\n\
+     \x20   created_at      TEXT NOT NULL,  -- ISO 8601\n\
+     \x20   CHECK (source_entity <> target_entity OR source_table <> target_table)\n\
      );\n\
      CREATE INDEX IF NOT EXISTS idx_lineage_source ON verisimdb_lineage_graph(source_entity);\n\
      CREATE INDEX IF NOT EXISTS idx_lineage_target ON verisimdb_lineage_graph(target_entity);\n\n"
@@ -278,6 +283,29 @@ mod tests {
         assert!(ddl.contains("verisimdb_temporal_versions"));
         assert!(ddl.contains("verisimdb_access_policies"));
         assert!(ddl.contains("verisimdb_simulation_branches"));
+    }
+
+    /// Lineage edges must refuse self-loops at the storage layer
+    /// (closes #42). The DAG claim in the README would be unenforced
+    /// without this check.
+    #[test]
+    fn test_lineage_table_has_self_reference_check() {
+        let schema = test_schema();
+        let octad = OctadConfig {
+            enable_provenance: false,
+            enable_lineage: true,
+            enable_temporal: false,
+            enable_access_control: false,
+            enable_constraints: false,
+            enable_simulation: false,
+        };
+        let ddl = generate_sidecar_schema(&schema, &octad);
+        assert!(ddl.contains("verisimdb_lineage_graph"));
+        // The exact CHECK clause must be present in the emitted DDL.
+        assert!(
+            ddl.contains("CHECK (source_entity <> target_entity OR source_table <> target_table)"),
+            "lineage table is missing the self-reference CHECK constraint"
+        );
     }
 
     #[test]
