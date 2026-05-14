@@ -31,6 +31,11 @@ pub struct Manifest {
     #[serde(default)]
     pub sidecar: SidecarConfig,
 
+    /// Retention policy — how long each octad dimension keeps history.
+    /// See [`RetentionConfig`]; `verisimiser gc` enforces these bounds.
+    #[serde(default)]
+    pub retention: RetentionConfig,
+
     // --- Legacy fields for backward compatibility ---
     /// Legacy top-level [verisimiser] section.
     #[serde(default)]
@@ -267,6 +272,40 @@ pub struct SidecarConfig {
     /// File path for the sidecar database.
     #[serde(default = "default_sidecar_path")]
     pub path: String,
+}
+
+/// [retention] section — bounds on how long each octad dimension's history
+/// is kept in the sidecar. A field of `0` means "keep forever". The actual
+/// purging is performed by `verisimiser gc`. Closes #50 (V-L2-P1).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionConfig {
+    /// Maximum age (in days) of provenance log entries. `0` means forever.
+    #[serde(rename = "provenance-days", default = "default_retention_forever")]
+    pub provenance_days: u32,
+
+    /// Maximum age (in days) of temporal version entries. `0` means forever.
+    /// Only superseded versions (`valid_to IS NOT NULL`) are eligible; the
+    /// current version is always retained.
+    #[serde(rename = "temporal-days", default = "default_retention_forever")]
+    pub temporal_days: u32,
+
+    /// Maximum age (in days) of lineage graph edges. `0` means forever.
+    #[serde(rename = "lineage-days", default = "default_retention_forever")]
+    pub lineage_days: u32,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            provenance_days: default_retention_forever(),
+            temporal_days: default_retention_forever(),
+            lineage_days: default_retention_forever(),
+        }
+    }
+}
+
+fn default_retention_forever() -> u32 {
+    0
 }
 
 impl Default for SidecarConfig {
@@ -551,6 +590,7 @@ pub(crate) fn render_manifest_template(database: &str, name: Option<&str>) -> St
     let project = ProjectConfig::default();
     let octad = OctadConfig::default();
     let sidecar = SidecarConfig::default();
+    let retention = RetentionConfig::default();
     let project_name = name.unwrap_or(&project.name);
     format!(
         r#"# SPDX-License-Identifier: PMPL-1.0-or-later
@@ -577,6 +617,12 @@ enable-simulation = {enable_simulation}
 [sidecar]
 storage = "{sidecar_storage}"
 path = "{sidecar_path}"
+
+[retention]
+# Days to keep per dimension. 0 = keep forever.
+provenance-days = {provenance_days}
+temporal-days   = {temporal_days}
+lineage-days    = {lineage_days}
 "#,
         project_version = project.version,
         conn_env = default_connection_env(),
@@ -588,6 +634,9 @@ path = "{sidecar_path}"
         enable_simulation = octad.enable_simulation,
         sidecar_storage = sidecar.storage,
         sidecar_path = sidecar.path,
+        provenance_days = retention.provenance_days,
+        temporal_days = retention.temporal_days,
+        lineage_days = retention.lineage_days,
     )
 }
 

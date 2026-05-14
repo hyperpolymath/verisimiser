@@ -17,7 +17,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use verisimiser::{abi, codegen, doctor, manifest};
+use verisimiser::{abi, codegen, doctor, gc, manifest};
 
 /// Long version string: `<crate-version> (<git-describe>, built <date>)`.
 const LONG_VERSION: &str = concat!(
@@ -122,6 +122,17 @@ enum Commands {
         #[arg(short, long)]
         manifest: Option<String>,
         /// Emit the structured ValidationReport as JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Purge sidecar rows older than the bounds in `[retention]`.
+    Gc {
+        #[arg(short, long, default_value = "verisimiser.toml")]
+        manifest: String,
+        /// Report what would be deleted without actually deleting.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit the structured GcReport as JSON instead of text.
         #[arg(long)]
         json: bool,
     },
@@ -252,6 +263,27 @@ fn main() -> Result<()> {
         Commands::Doctor { manifest, json } => {
             let report = doctor::run_doctor(manifest.as_deref());
             emit_report(&report, json, "doctor")
+        }
+
+        Commands::Gc {
+            manifest,
+            dry_run,
+            json,
+        } => {
+            let m = manifest::load_manifest(&manifest)?;
+            let report = gc::run_gc(&m, dry_run)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                let action = if report.dry_run { "would delete" } else { "deleted" };
+                println!("verisimiser gc ({}):", if report.dry_run { "dry-run" } else { "apply" });
+                println!("  sidecar:    {}", report.sidecar);
+                println!("  provenance: {action} {} rows", report.provenance_deleted);
+                println!("  temporal:   {action} {} rows", report.temporal_deleted);
+                println!("  lineage:    {action} {} rows", report.lineage_deleted);
+                println!("  total:      {} rows", report.total());
+            }
+            Ok(())
         }
 
         Commands::Version { json } => {
