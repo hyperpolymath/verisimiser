@@ -21,10 +21,11 @@ anyhow = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 
 [build-dependencies]
 chrono = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+proptest = "1"

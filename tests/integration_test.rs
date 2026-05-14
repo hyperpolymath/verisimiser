@@ -436,9 +436,7 @@ fn test_end_to_end_file_workflow() {
         .unwrap();
     }
 
-    // Write a manifest file. Note: on Windows, schema_path uses backslashes
-    // which are escape characters in TOML basic strings — emit the path as a
-    // TOML literal string (single-quoted) to dodge escape interpretation.
+    // Write a manifest file.
     let manifest_path = dir.path().join("verisimiser.toml");
     {
         let mut f = std::fs::File::create(&manifest_path).unwrap();
@@ -451,7 +449,7 @@ name = "test-articles"
 [database]
 backend = "sqlite"
 connection-string-env = "TEST_DB"
-schema-source = '{}'
+schema-source = "{}"
 
 [octad]
 enable-provenance = true
@@ -482,8 +480,8 @@ path = ".verisim/test.db"
     // Generate overlay.
     let overlay_ddl = overlay::generate_sidecar_schema(&schema, &manifest.octad)
         .expect("schema is valid");
-    assert!(overlay_ddl.contains("verisim_provenance_log"));
-    assert!(overlay_ddl.contains("verisim_temporal_versions"));
+    assert!(overlay_ddl.contains("verisimdb_provenance_log"));
+    assert!(overlay_ddl.contains("verisimdb_temporal_versions"));
     assert!(
         !overlay_ddl.contains("verisimdb_lineage_graph"),
         "Lineage is disabled"
