@@ -161,34 +161,73 @@ pub struct ProvenanceEntry {
     pub transformation: Option<String>,
 }
 
+/// Domain-separation tag for the provenance hash preimage. The trailing
+/// NUL is the standard separator between context and payload, and the
+/// `v1` suffix lets future migrations to a different encoding mark old
+/// vs new entries unambiguously. Closes #27 (V-L2-C1).
+const PROVENANCE_HASH_DOMAIN: &[u8] = b"verisim-prov-v1\0";
+
 impl ProvenanceEntry {
-    /// Compute the SHA-256 hash for a provenance entry, chaining from the previous hash.
+    /// Compute the SHA-256 hash for a provenance entry.
     ///
-    /// The hash covers: previous_hash, entity_id, operation, and timestamp.
-    /// This ensures that any tampering with the chain is detectable.
+    /// Preimage is the canonical length-prefixed concatenation of every
+    /// field that participates in tamper detection:
+    ///
+    /// ```text
+    /// SHA-256(
+    ///   "verisim-prov-v1\0"                          // domain tag + version
+    ///   || u64_le(len(previous_hash))    || previous_hash
+    ///   || u64_le(len(entity_id))        || entity_id
+    ///   || u64_le(len(operation))        || operation
+    ///   || u64_le(len(actor))            || actor
+    ///   || i64_le(secs)  || u32_le(nanos)            // canonical timestamp
+    ///   || u64_le(len(before_snapshot))  || before_snapshot
+    ///   || u64_le(len(transformation))   || transformation
+    /// )
+    /// ```
+    ///
+    /// `Option<String>` fields encode as `len(0) || ""` when `None`. The
+    /// timestamp is encoded from `chrono::DateTime`'s seconds-since-epoch
+    /// + subsecond nanos rather than RFC3339, so timestamps with
+    /// different valid string forms but the same instant produce the same
+    /// hash (closes #28 / V-L2-C2).
     pub fn compute_hash(
         previous_hash: &str,
         entity_id: &str,
         operation: &str,
-        timestamp: &str,
+        actor: &str,
+        timestamp: &DateTime<Utc>,
+        before_snapshot: Option<&str>,
+        transformation: Option<&str>,
     ) -> String {
         let mut hasher = Sha256::new();
-        hasher.update(previous_hash.as_bytes());
-        hasher.update(entity_id.as_bytes());
-        hasher.update(operation.as_bytes());
-        hasher.update(timestamp.as_bytes());
+        hasher.update(PROVENANCE_HASH_DOMAIN);
+        write_len_prefixed(&mut hasher, previous_hash.as_bytes());
+        write_len_prefixed(&mut hasher, entity_id.as_bytes());
+        write_len_prefixed(&mut hasher, operation.as_bytes());
+        write_len_prefixed(&mut hasher, actor.as_bytes());
+        hasher.update(&timestamp.timestamp().to_le_bytes());
+        hasher.update(&timestamp.timestamp_subsec_nanos().to_le_bytes());
+        write_len_prefixed(&mut hasher, before_snapshot.unwrap_or("").as_bytes());
+        write_len_prefixed(&mut hasher, transformation.unwrap_or("").as_bytes());
         format!("{:x}", hasher.finalize())
     }
 
     /// Verify that this entry's hash is consistent with its contents.
     ///
-    /// Returns `true` if the stored hash matches the recomputed hash.
+    /// Returns `true` iff the stored hash matches a freshly recomputed
+    /// hash over the same fields. All seven preimage fields participate,
+    /// so tampering with any of them (including `actor`,
+    /// `before_snapshot`, `transformation`) is detectable.
     pub fn verify(&self) -> bool {
         let expected = Self::compute_hash(
             &self.previous_hash,
             &self.entity_id,
             &self.operation,
-            &self.timestamp.to_rfc3339(),
+            &self.actor,
+            &self.timestamp,
+            self.before_snapshot.as_deref(),
+            self.transformation.as_deref(),
         );
         self.hash == expected
     }
@@ -196,7 +235,7 @@ impl ProvenanceEntry {
     /// Create a new genesis entry (first in the chain for an entity).
     pub fn genesis(entity_id: &str, actor: &str) -> Self {
         let timestamp = Utc::now();
-        let hash = Self::compute_hash("", entity_id, "insert", &timestamp.to_rfc3339());
+        let hash = Self::compute_hash("", entity_id, "insert", actor, &timestamp, None, None);
         Self {
             hash,
             previous_hash: String::new(),
@@ -216,7 +255,10 @@ impl ProvenanceEntry {
             &self.hash,
             &self.entity_id,
             operation,
-            &timestamp.to_rfc3339(),
+            actor,
+            &timestamp,
+            None,
+            None,
         );
         Self {
             hash,
@@ -229,6 +271,14 @@ impl ProvenanceEntry {
             transformation: None,
         }
     }
+}
+
+/// Length-prefix `bytes` with a little-endian `u64` length and feed both
+/// into `hasher`. Canonical encoding for variable-length fields: distinct
+/// inputs always produce distinct concatenations.
+fn write_len_prefixed(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +546,109 @@ mod tests {
         // Tamper with the entity_id after hash computation.
         entry.entity_id = "entity-2".to_string();
         assert!(!entry.verify(), "Tampered entry should fail verification");
+    }
+
+    /// Tampering with `actor` must break `verify()` (closes #29 / V-L2-C3).
+    /// Before V-L2-C1, `actor` was outside the hash preimage and this
+    /// mutation was invisible — see V-L2-C4.
+    #[test]
+    fn test_provenance_tamper_actor() {
+        let mut e = ProvenanceEntry::genesis("post-1", "alice");
+        e.actor = "mallory".to_string();
+        assert!(!e.verify(), "actor must participate in the hash");
+    }
+
+    /// Tampering with `before_snapshot` must break `verify()`.
+    #[test]
+    fn test_provenance_tamper_before_snapshot() {
+        let mut e = ProvenanceEntry::genesis("post-1", "alice");
+        e.before_snapshot = Some("{\"redacted\":true}".to_string());
+        assert!(
+            !e.verify(),
+            "before_snapshot must participate in the hash"
+        );
+    }
+
+    /// Tampering with `transformation` must break `verify()`.
+    #[test]
+    fn test_provenance_tamper_transformation() {
+        let mut e = ProvenanceEntry::genesis("post-1", "alice");
+        e.transformation = Some("evil-rewrite".to_string());
+        assert!(
+            !e.verify(),
+            "transformation must participate in the hash"
+        );
+    }
+
+    /// Two `DateTime<Utc>` values constructed via different paths but
+    /// representing the same instant must produce the same hash. The
+    /// previous RFC3339-string encoding could produce different hashes
+    /// for the same instant depending on the serialiser's formatting
+    /// choices (closes #28 / V-L2-C2).
+    #[test]
+    fn test_provenance_timestamp_canonical_encoding() {
+        let ts_parsed: DateTime<Utc> = "2026-05-13T08:00:00.000Z".parse().unwrap();
+        let ts_offset: DateTime<Utc> = "2026-05-13T08:00:00+00:00".parse().unwrap();
+        assert_eq!(ts_parsed, ts_offset, "the two strings denote the same instant");
+
+        let h1 = ProvenanceEntry::compute_hash(
+            "",
+            "post-1",
+            "insert",
+            "alice",
+            &ts_parsed,
+            None,
+            None,
+        );
+        let h2 = ProvenanceEntry::compute_hash(
+            "",
+            "post-1",
+            "insert",
+            "alice",
+            &ts_offset,
+            None,
+            None,
+        );
+        assert_eq!(h1, h2, "same instant must produce same hash regardless of input string form");
+    }
+
+    /// Round-trip: build a 4-entry chain and assert every entry verifies;
+    /// then mutate each field of each entry in turn and assert the
+    /// mutation breaks `verify()` (closes #29 mutation-matrix clause).
+    #[test]
+    fn test_provenance_mutation_matrix_breaks_verification() {
+        let mut chain_entries = vec![
+            ProvenanceEntry::genesis("post-1", "alice"),
+        ];
+        for actor in ["bob", "carol", "dave"] {
+            let next = chain_entries.last().unwrap().chain("update", actor);
+            chain_entries.push(next);
+        }
+        for e in &chain_entries {
+            assert!(e.verify(), "every entry must verify before mutation");
+        }
+
+        // Mutate each hash-covered field of each entry. Every mutation must break verify().
+        for original in &chain_entries {
+            for mutator in [
+                |e: &mut ProvenanceEntry| e.entity_id = format!("{}-X", e.entity_id),
+                |e: &mut ProvenanceEntry| e.operation = format!("{}-X", e.operation),
+                |e: &mut ProvenanceEntry| e.actor = format!("{}-X", e.actor),
+                |e: &mut ProvenanceEntry| e.before_snapshot = Some("X".to_string()),
+                |e: &mut ProvenanceEntry| e.transformation = Some("X".to_string()),
+                |e: &mut ProvenanceEntry| {
+                    e.timestamp += chrono::Duration::nanoseconds(1)
+                },
+                |e: &mut ProvenanceEntry| e.previous_hash = format!("{}X", e.previous_hash),
+            ] {
+                let mut tampered = original.clone();
+                mutator(&mut tampered);
+                assert!(
+                    !tampered.verify(),
+                    "mutation should break verify() but didn't"
+                );
+            }
+        }
     }
 
     #[test]
