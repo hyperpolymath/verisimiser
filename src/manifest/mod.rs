@@ -359,48 +359,111 @@ pub fn load_manifest(path: &str) -> Result<Manifest> {
 
 /// Generate a new `verisimiser.toml` manifest file with the Phase 1 schema.
 ///
-/// The `database` parameter sets the backend type (postgresql, sqlite, mongodb).
-/// Fails if the file already exists to prevent accidental overwrites.
-pub fn init_manifest(database: &str) -> Result<()> {
+/// The `database` parameter sets the backend type. Field defaults are pulled
+/// from `OctadConfig::default()`, `SidecarConfig::default()` and friends so
+/// the emitted template tracks code without drift.
+///
+/// - `name`: project name; defaults to `ProjectConfig::default().name` if `None`.
+/// - `force`: if `true`, overwrite an existing file. Otherwise, error.
+pub fn init_manifest(database: &str, name: Option<&str>, force: bool) -> Result<()> {
     let path = "verisimiser.toml";
-    if std::path::Path::new(path).exists() {
-        anyhow::bail!("{} already exists — remove it first to reinitialise", path);
+    if std::path::Path::new(path).exists() && !force {
+        anyhow::bail!(
+            "{} already exists — pass --force to overwrite or remove it first",
+            path
+        );
     }
 
-    // Simulation is unimplemented across all backends; placeholder "false".
-    let enable_simulation = "false";
+    let template = render_manifest_template(database, name);
+    std::fs::write(path, template)?;
+    println!("Created {} for {} backend", path, database);
+    Ok(())
+}
 
-    let template = format!(
+/// Render the manifest template, pulling defaults from the Default impls.
+/// Public to the crate so tests can assert the rendered TOML round-trips.
+pub(crate) fn render_manifest_template(database: &str, name: Option<&str>) -> String {
+    let project = ProjectConfig::default();
+    let octad = OctadConfig::default();
+    let sidecar = SidecarConfig::default();
+    let project_name = name.unwrap_or(&project.name);
+    format!(
         r#"# SPDX-License-Identifier: PMPL-1.0-or-later
 # VeriSimiser manifest — augment {database} with VeriSimDB octad capabilities
 
 [project]
-name = "my-augmented-db"
-version = "0.1.0"
+name = "{project_name}"
+version = "{project_version}"
 # description = "My database augmented with VeriSimDB octad dimensions"
 
 [database]
 backend = "{database}"
-connection-string-env = "DATABASE_URL"
+connection-string-env = "{conn_env}"
 # schema-source = "schema.sql"
 
 [octad]
-enable-provenance = true
-enable-lineage = true
-enable-temporal = true
-enable-access-control = true
-enable-constraints = true
+enable-provenance = {enable_provenance}
+enable-lineage = {enable_lineage}
+enable-temporal = {enable_temporal}
+enable-access-control = {enable_access_control}
+enable-constraints = {enable_constraints}
 enable-simulation = {enable_simulation}
 
 [sidecar]
-storage = "sqlite"
-path = ".verisim/sidecar.db"
-"#
-    );
+storage = "{sidecar_storage}"
+path = "{sidecar_path}"
+"#,
+        project_version = project.version,
+        conn_env = default_connection_env(),
+        enable_provenance = octad.enable_provenance,
+        enable_lineage = octad.enable_lineage,
+        enable_temporal = octad.enable_temporal,
+        enable_access_control = octad.enable_access_control,
+        enable_constraints = octad.enable_constraints,
+        enable_simulation = octad.enable_simulation,
+        sidecar_storage = sidecar.storage,
+        sidecar_path = sidecar.path,
+    )
+}
 
-    std::fs::write(path, template)?;
-    println!("Created {} for {} backend", path, database);
-    Ok(())
+#[cfg(test)]
+mod init_template_tests {
+    use super::{render_manifest_template, Manifest, OctadConfig};
+
+    #[test]
+    fn template_round_trips_through_toml() {
+        let rendered = render_manifest_template("postgresql", None);
+        let m: Manifest =
+            toml::from_str(&rendered).expect("rendered template must parse as Manifest");
+        let defaults = OctadConfig::default();
+        // Every octad field equals its Default::default() — no drift.
+        assert_eq!(m.octad.enable_provenance, defaults.enable_provenance);
+        assert_eq!(m.octad.enable_lineage, defaults.enable_lineage);
+        assert_eq!(m.octad.enable_temporal, defaults.enable_temporal);
+        assert_eq!(
+            m.octad.enable_access_control,
+            defaults.enable_access_control
+        );
+        assert_eq!(m.octad.enable_constraints, defaults.enable_constraints);
+        assert_eq!(m.octad.enable_simulation, defaults.enable_simulation);
+        assert_eq!(m.database.backend, "postgresql");
+    }
+
+    #[test]
+    fn template_uses_explicit_name_when_provided() {
+        let rendered = render_manifest_template("sqlite", Some("acme-warehouse"));
+        let m: Manifest = toml::from_str(&rendered).expect("template parses");
+        assert_eq!(m.project.name, "acme-warehouse");
+        assert_eq!(m.database.backend, "sqlite");
+    }
+
+    #[test]
+    fn template_falls_back_to_default_name() {
+        let rendered = render_manifest_template("mongodb", None);
+        let m: Manifest = toml::from_str(&rendered).expect("template parses");
+        let default_name = super::ProjectConfig::default().name;
+        assert_eq!(m.project.name, default_name);
+    }
 }
 
 /// Print a human-readable status summary of a loaded manifest.
