@@ -7,19 +7,12 @@ Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 :icons: font
 :source-highlighter: rouge
 
-== Related repos
-
-* https://github.com/hyperpolymath/verisimdb-data[`verisimdb-data`] —
-  flat-file store for scan results and drift snapshots, and the dogfood
-  site for the hyperpolymath Idris2 + Zig ABI shared with `proven`,
-  `burble`, `gossamer`. Verisimiser does not require it.
-
 == What Is This?
 
 VeriSimiser augments existing databases with capabilities from
-https://github.com/hyperpolymath/nextgen-databases[VeriSimDB]'s **octad
-model** — eight concerns layered over any backend without forcing a
-schema migration.
+https://github.com/hyperpolymath/nextgen-databases[VeriSimDB]'s octad model —
+specifically the capabilities that work as genuine piggybacks without
+requiring you to replace your database.
 
 **Honest framing**: this is not a pure bolt-on like the language -isers.
 Language -isers generate a separate wrapper alongside your code — one-way
@@ -27,234 +20,349 @@ dependency, your code untouched. Database augmentation is fundamentally
 different because it interacts with shared mutable state. VeriSimiser is
 therefore split into two tiers:
 
-* **Tier 1 (true piggyback)** — concerns that sit alongside or in front
-  of your database, writing only to a sidecar and never touching your
-  storage engine. Safe bolt-ons.
-* **Tier 2 (augmentation layer)** — modality overlays (graph, vector,
-  tensor, semantic, document, spatial) that require additional storage
-  alongside your database. Honest about being "VeriSimDB with your
+* **Tier 1 (true piggyback)** — capabilities that sit alongside or in
+  front of your database, never touching its storage engine. Safe
+  bolt-ons.
+* **Tier 2 (augmentation layer)** — capabilities that require additional
+  storage alongside your database. Honest about being "VeriSimDB with your
   database as one backend" rather than pretending to be invisible.
 
-== VeriSimDB's Octad: Eight Concerns
+== Octad: Eight Concerns
 
-Each entity in a VeriSimDB-augmented database is enriched along 8
-concerns — properties you want to know or enforce about the data,
-independent of how it is stored. (Per `docs/decisions/0004-octad-ontology.adoc`.
-The earlier "Eight Modalities" framing — graph, vector, tensor, …
-— is reframed as a set of *Tier 2 overlays*, not the top-level
-identity; see "Tier 2" below.)
+Each entity in a VeriSimiser-augmented database is enriched along
+**eight concerns** — properties you want to know or enforce about the
+data, independent of how it is stored. The concerns octad is canonical
+per `docs/decisions/0004-octad-ontology.adoc` (ADR-0004). The earlier
+"Eight Modalities" framing (graph, vector, tensor, …) is reframed as a
+set of **Tier 2 overlay representations**, not the top-level identity;
+see <<tier-2-augmentation-layer,Tier 2>> below.
 
-[cols="1,3,1"]
+[cols="1,2,1,1,1"]
 |===
-| Concern | What it answers | VeriSimiser Tier
+| Concern | Question it answers | Sidecar / storage | Code module | Tier
 
-| **Data**          | The original rows in your database. | Always on (your DB)
-| **Metadata**      | Schema and type information. | Always on (introspection)
-| **Provenance**    | "Who did what, when, and how?" — SHA-256 hash-chained audit. | Tier 1 ✓
-| **Lineage**       | "Where did this come from?" — DAG of data derivations. | Tier 1 ✓
-| **Constraints**   | "Does this still hold?" — invariant enforcement across concerns. | Tier 1 ✓
-| **AccessControl** | "Who is allowed to see/change this?" — row/column policies. | Tier 1 ✓
-| **Temporal**      | "What did this look like at time T?" — version history + point-in-time queries. | Tier 1 ✓
-| **Simulation**    | "What if we changed this?" — sandbox branches that do not touch the main data. | Tier 2
+| **Data**
+| The original rows in your database.
+| your DB
+| n/a
+| Always on
+
+| **Metadata**
+| Schema, types, and runtime introspection.
+| your DB
+| `manifest::`
+| Always on
+
+| **Provenance**
+| Who did what, when, and how? — SHA-256 hash-chained audit trail.
+| `verisimdb_provenance_log` (SQLite sidecar)
+| `abi::`, `tier1::provenance`
+| Tier 1 ✓
+
+| **Lineage**
+| Where did this come from? — DAG of data derivations.
+| `verisimdb_lineage_edges` (acyclic, per ADR-0005)
+| `tier1::lineage`
+| Tier 1 ✓
+
+| **Constraints**
+| Does this still hold? — invariant enforcement across concerns.
+| `verisimdb_constraints` + check rules
+| `tier1::drift` (observed symptoms)
+| Tier 1 ✓
+
+| **AccessControl**
+| Who is allowed to see / change this? — row/column policies.
+| `verisimdb_access_policies` (per ADR-0007)
+| `tier1::access`
+| Tier 1 ✓
+
+| **Temporal**
+| What did this look like at time T? — version history + point-in-time.
+| `verisimdb_temporal_versions`
+| `tier1::temporal`
+| Tier 1 ✓
+
+| **Simulation**
+| What if we changed this? — sandbox branches that do not touch main data.
+| `verisimdb_simulation_branches` (snapshot isolation, per ADR-0006)
+| `tier2::simulation`
+| Tier 2
+
 |===
 
-The codebase commits to this ontology in
-`src/abi/mod.rs::OctadDimension`, `src/manifest/mod.rs::OctadConfig`,
-and the codegen tables. See `docs/decisions/ADR-0001-octad-ontology.adoc`
-for why "concerns" was chosen over the alternative "modalities" framing.
+The canonical Rust enumeration of these is `abi::OctadDimension`. The
+CLI's `verisimiser octad` subcommand prints this set with descriptions.
 
 == Tier 1: True Piggybacks
 
-These work like PostGIS — they add capability without replacing anything.
+These work like PostGIS — they add capability without replacing
+anything. Tier 1 sits beside your primary database and either intercepts
+its event stream (write-path observers) or filters its query results
+(read-path observers).
 
-=== Provenance Tracking
+=== Provenance (write-path observer)
 
-Hash-chain verified origin tracking for every piece of data. VeriSimiser
-adds provenance to any database as a sidecar:
+SHA-256 hash-chain verified origin tracking for every piece of data.
 
-* Every write is intercepted and a provenance record created
-* SHA-256 hash chain links provenance records in order
-* Query results can include provenance metadata
-* Full audit trail: who created, when, from what source, what transformations
+* Every write is intercepted and a provenance record created.
+* SHA-256 hash chain links records in order, with the chain hash
+  computed over length-prefixed, canonically-encoded field bytes
+  prefixed by the `verisim-prov-v1\0` domain tag (collision-resistant,
+  see `src/abi/mod.rs::compute_hash`).
+* Query results can include provenance metadata.
+* Full audit trail: who created, when, from what source, what
+  transformations.
 
-This is a **write-path observer** — it records what happened, it doesn't
-change what happened. The provenance chain is stored in a separate sidecar
-(SQLite, file, or VeriSimDB instance), never in your primary database.
+This is a **write-path observer** — it records what happened, it
+doesn't change what happened. The provenance chain is stored in a
+separate sidecar (SQLite, file, or VeriSimDB instance), never in your
+primary database.
 
-=== Temporal Versioning
+See `docs/theory/provenance-threat-model.adoc` for the four-adversary
+threat model and the protections each adversary class encounters.
 
-Automatic version history for entities. VeriSimiser maintains a temporal
-sidecar that records every state change:
+=== Lineage (DAG of derivations)
+
+Records the "where did this come from?" question as a directed acyclic
+graph of entity-to-entity edges. ADR-0005 fixes acyclicity as a binding
+invariant — every lineage write checks for cycles via recursive CTE
+before insert.
+
+=== Temporal versioning (point-in-time queries)
+
+Automatic version history for entities, stored as
+`(entity_id, table_name, version, valid_from, valid_to, snapshot, operation)`.
 
 * Point-in-time queries: "what did this entity look like at time T?"
 * Diff queries: "what changed between T1 and T2?"
-* Rollback capability: restore any entity to a previous state
-* Retention policies: auto-prune history older than N days
+* Rollback capability: restore any entity to a previous state.
+* Retention policies: `verisimiser gc` auto-prunes history older than
+  `[retention.temporal-days]` from the manifest (V-L2-P1).
 
-This piggybacks onto write events (triggers, CDC, or application-level
-hooks) and stores version history in a separate sidecar.
+Piggybacks onto write events (triggers, CDC, or application-level hooks)
+and stores version history in a separate sidecar.
 
-=== Constraints & Drift Detection
+=== AccessControl (row / column policies)
 
-The Constraints concern enforces cross-dimensional invariants and
-observes *drift* — places where Data, Metadata, and any active Tier 2
-overlays disagree. Drift detection is a **read-path observer**: it
-inspects query results, never modifies them.
+Prefix-typed principals (`user:`, `group:`, `role:`) and an
+`AccessPredicate` AST with deny-wins resolution. Policies are evaluated
+against the same row that flows through the read-path. See ADR-0007 for
+the model.
 
-VeriSimiser tracks eight symptomatic categories (mapped onto the
-Constraints concern):
+=== Drift detection: symptoms of Constraints violation across modalities
 
-. **Structural drift** — schema changes not reflected across active overlays
-. **Semantic drift** — meaning divergence between overlays
-. **Temporal drift** — version skew between overlays
-. **Statistical drift** — distribution shift in vector/tensor overlays
-. **Referential drift** — broken links between the graph overlay and Data
-. **Provenance drift** — transformation-chain inconsistencies
-. **Spatial drift** — coordinates inconsistent with other overlays
-. **Embedding drift** — vector embeddings stale relative to source documents
+Drift detection is **what the Constraints concern observes** when the
+same entity is represented in more than one form and the forms disagree.
+Once a Tier 2 overlay (graph, vector, tensor, …) is enabled alongside
+the primary Data, the representations can fall out of sync — at which
+point the Constraints concern reports the symptom.
 
-(Each category needs a computable definition before it can be detected;
-this is on the roadmap, not implemented yet.)
+ADR-0003 fixes each drift category as a triple of (input, distance
+function, default threshold). All categories produce a score in `[0, 1]`
+so an aggregator can take a weighted sum and stay in range. The eight
+categories:
 
-=== Lineage
+[cols="1,2,1"]
+|===
+| Category | What it compares | Default threshold
 
-Directed-edge graph of data derivation: which entity was derived from
-which other entity, and by what transformation. Intended as a DAG (cycle
-prevention enforcement is a future ADR).
+| **Temporal**     | `MAX(version)` per modality for the same entity | `0.10`
+| **Structural**   | Schema fingerprint (sorted `(field, type)` pairs) | `0.05`
+| **Semantic**     | Free-text labels via sentence embeddings (cosine) | `0.20`
+| **Statistical**  | Distributions over the same field (1-Wasserstein) | `0.15`
+| **Referential**  | Edge sets (FK / cross-reference Jaccard) | `0.10`
+| **Provenance**   | Tip hashes + longest common prefix of chains | `0.05`
+| **Spatial**      | Coordinates via haversine, normalised | `0.0001`
+| **Embedding**    | Stored vector vs freshly recomputed vector (cosine) | `0.10`
 
-=== Access Control
+|===
 
-Row-level and column-level policies evaluated at query time. Independent
-of any backend-native role system; verisimiser interprets policies and
-filters/redacts results.
+Run `verisimiser drift --threshold 0.1` to scan every entity in
+`verisimdb_temporal_versions` and report those whose score sits at or
+above the threshold. The Temporal category ships today (V-L1-E2, #49);
+the remaining seven follow under V-L1-E* using the same report shape.
 
+This is a **read-path augmentation** — it observes query results, it
+doesn't modify them. Safe to add, safe to remove, no data dependency.
+
+[[tier-2-augmentation-layer]]
 == Tier 2: Augmentation Layer
 
-These capabilities require additional storage alongside your database.
+Tier 2 capabilities require additional storage alongside your database.
 They are honest about being "VeriSimDB modalities with your database as
-the document/primary store." This is still valuable — it's how you get
-extra modality projections incrementally — but it's not invisible.
+the primary store." This is still valuable — it's how you get octad
+capabilities incrementally — but it's not a bolt-on.
 
-* **Graph overlay**: Add RDF triples and property-graph edges to entities
-  in your relational database. Stored in a separate graph index.
-* **Vector overlay**: Add embeddings for similarity search. Stored in
+Tier 2 modalities are **overlay representations** — alternative shapes
+the same entity is projected into for a specific query workload. A user
+enables `vector` because they want similarity search; they enable
+`spatial` because they want geofencing. Enabling an overlay is
+independent of which concerns are active.
+
+* **Graph overlay** — RDF triples and property graph edges. Stored in a
+  separate graph index.
+* **Vector overlay** — embeddings for similarity search. Stored in an
   HNSW index alongside your database.
-* **Tensor overlay**: Add multi-dimensional numeric data. Stored in
+* **Tensor overlay** — multi-dimensional numeric data. Stored in an
   ndarray-backed sidecar.
-* **Semantic overlay**: Add type annotations and proof blobs. Stored in
+* **Semantic overlay** — type annotations and proof blobs. Stored in a
   CBOR sidecar.
-* **Document overlay**: Add full-text search over text columns.
-  Stored in a Tantivy index.
-* **Spatial overlay**: Add geospatial coordinates. Stored in R-tree sidecar.
-* **Simulation**: Branched copies of data for what-if analysis. Stored
-  in `verisimdb_simulation_branches` + `_deltas`.
+* **Document overlay** — full-text search. Stored in a Tantivy sidecar.
+* **Spatial overlay** — geospatial coordinates. Stored in an R-tree
+  sidecar.
 
 Each Tier 2 overlay has its own storage and can be enabled
-independently. Your primary database remains the source of truth for
-its native data.
+independently via `[tier2]` in the manifest. Your primary database
+remains the source of truth for its native data. When an overlay
+diverges from the primary Data, the Constraints concern reports the
+symptom via the relevant drift category (see above).
 
 == The Manifest
 
 [source,toml]
 ----
-[project]
+[verisimiser]
 name = "my-augmented-db"
-version = "0.1.0"
 
 [database]
-backend = "sqlite"                       # sqlite | postgresql | mongodb
-connection-string-env = "DATABASE_URL"   # env var; never the literal secret
-schema-source = "schema.sql"             # optional; SQL DDL describing target schema
+target-db = "postgresql"
+connection-string = "postgres://localhost/mydb"
 
-[octad]
-enable-provenance     = true
-enable-lineage        = true
-enable-temporal       = true
-enable-access-control = true
-enable-simulation     = false            # Tier 2: branching/sandboxing
+# Tier 1: concerns layered onto your DB without altering its storage
+[tier1]
+provenance = true             # SHA-256 hash-chain audit trail
+lineage = true                # acyclic derivation DAG (ADR-0005)
+constraints = true            # invariant enforcement / drift reports
+access-control = true         # row/column policies (ADR-0007)
+temporal-versioning = true    # automatic version history
+drift-detection = true        # cross-modal observer (Constraints symptom)
 
-[sidecar]
-storage = "sqlite"                       # sqlite (default) | json
-path    = ".verisim/sidecar.db"
+[tier1.provenance]
+sidecar = "sqlite"            # sqlite | file | verisim
+sidecar-path = ".verisimiser/provenance.db"
+
+[tier1.temporal]
+sidecar = "sqlite"
+
+[retention]
+temporal-days = 90            # purged by `verisimiser gc`
+
+# Tier 2: overlay representations (additional storage alongside your DB)
+[tier2]
+graph = false
+vector = false
+tensor = false
+semantic = false
+document = false
+spatial = false
+
+[tier2.vector]
+# model = "sentence-transformers/all-MiniLM-L6-v2"
+# dimensions = 384
 ----
 
-Run `verisimiser init --database sqlite` to generate a starter manifest.
+The `verisimiser octad` subcommand prints the active concerns from your
+manifest; `verisimiser doctor` checks that sidecars, thresholds, and
+retention bounds are configured consistently.
 
 == Architecture
 
 [source]
 ----
-Your Application
-      │
-      ├──── writes ────► Your Database (unchanged)
-      │                       │
-      │                  VeriSimiser intercepts (write-path observer)
-      │                       │
-      │         ┌─────────────┼──────────────┐
-      │         │             │              │
-      │   Provenance     Temporal       Lineage / AccessControl /
-      │   sidecar        sidecar        Constraints sidecars (Tier 1)
-      │
-      └──── optional ──► Tier 2 modality overlays
-                          (Graph, Vector, Tensor, Semantic,
-                           Document, Spatial, Simulation)
+                    Your Application
+                          │
+                          ├──── writes ────► Your Database (Data, Metadata)
+                          │                       │
+                          │                  VeriSimiser intercepts
+                          │                       │
+              ┌───────────┴──────────────────────┼──────────────────────┐
+              │ Tier 1 sidecars (concerns)       │                      │
+              │                                   │                      │
+              │  ┌──────────────┐  ┌────────────┐ │  ┌─────────────────┐│
+              │  │ provenance   │  │ lineage    │ │  │ temporal         ││
+              │  │ log          │  │ DAG        │ │  │ versions         ││
+              │  │ (Provenance) │  │ (Lineage)  │ │  │ (Temporal)       ││
+              │  └──────────────┘  └────────────┘ │  └─────────────────┘│
+              │                                   │                      │
+              │  ┌────────────────┐  ┌──────────────────────────┐       │
+              │  │ access         │  │ drift index / constraint │       │
+              │  │ policies       │  │ check results            │       │
+              │  │ (AccessControl)│  │ (Constraints)            │       │
+              │  └────────────────┘  └──────────────────────────┘       │
+              └───────────────────────────────────┼──────────────────────┘
+                                                  │
+              ┌───── optional, per-overlay ───────┘
+              │ Tier 2 overlays (modalities)
+              │
+              │  ┌───────┐ ┌────────┐ ┌────────┐ ┌──────────┐ ┌────────┐ ┌────────┐
+              │  │ graph │ │ vector │ │ tensor │ │ semantic │ │ docs   │ │ spatial│
+              │  │ index │ │ HNSW   │ │ ndarry │ │ CBOR     │ │ Tantivy│ │ R-tree │
+              │  └───────┘ └────────┘ └────────┘ └──────────┘ └────────┘ └────────┘
+              │
+              └───── simulation branches (Simulation concern; per ADR-0006)
+                     snapshot-isolated, never touch main Data
 ----
 
-**Interception methods** (configurable per database — most are still
-roadmap items, see `ROADMAP.adoc`):
+**Interception methods** (configurable per database):
 
-* **PostgreSQL**: logical replication / `pg_notify` / triggers
-* **SQLite**: `sqlite3_update_hook` / WAL monitoring
-* **MongoDB**: change streams
-* **Application-level**: middleware / ORM hooks
-
-== ABI
-
-The Application Binary Interface for the augmentation layer is declared
-in two languages:
-
-* `src/interface/abi/` — Idris2 type definitions
-  (`Types.idr`, `Layout.idr`, `Foreign.idr`). These are the canonical
-  shapes; formal proofs of correctness against them are future work
-  (see `docs/decisions/ADR-0002-verification-tree.adoc`).
-* `src/interface/ffi/` — Zig C-compatible FFI implementing the Idris2
-  ABI for use from native code.
-
-The Rust `src/abi/mod.rs` mirrors the Idris2 types as plain structs
-used directly by the CLI and codegen.
+* **PostgreSQL** — logical replication / `pg_notify` / triggers.
+* **SQLite** — `sqlite3_update_hook` / WAL monitoring.
+* **MongoDB** — change streams.
+* **Application-level** — middleware / ORM hooks.
 
 == Relationship to VeriSimDB
 
-VeriSimiser is NOT a replacement for VeriSimDB. It's a gateway drug.
+VeriSimiser is NOT a replacement for VeriSimDB. It is a gateway drug.
 
-* **VeriSimiser Tier 1** gives you provenance, temporal, lineage,
-  access control, and constraints/drift detection on your existing
-  database. Zero commitment.
-* **VeriSimiser Tier 2** gives you individual modality overlays
-  (graph/vector/tensor/semantic/document/spatial) and simulation as
-  sidecars. Incremental adoption.
-* **Full VeriSimDB** gives you the complete model with native
+* **VeriSimiser Tier 1** gives you the six implementable concerns
+  (Provenance, Lineage, Constraints, AccessControl, Temporal — plus
+  Data and Metadata which are always-on) on your existing database.
+  Zero commitment.
+* **VeriSimiser Tier 2** gives you the modality overlays (graph,
+  vector, tensor, semantic, document, spatial) and the Simulation
+  concern as sidecars. Incremental adoption.
+* **Full VeriSimDB** gives you the complete octad with native
   cross-modal querying, VCL, and built-in drift normalisation. Full
   commitment.
 
-The migration path is: Tier 1 → Tier 2 → full VeriSimDB (if you want
+The migration path is Tier 1 → Tier 2 → full VeriSimDB (if you want
 it). Most users will be happy at Tier 1 or Tier 2.
+
+== Building and Running
+
+Per `docs/decisions/0009-build-path.adoc`, two build paths are
+canonical:
+
+* **`cargo build`** for development. MSRV pinned at Rust 1.85
+  (`rust-version` in `Cargo.toml`). The Justfile wraps the common
+  recipes.
+* **`Containerfile`** for ops. Produces a single OCI image suitable
+  for deployment, CI, and reproducible release builds.
+
+`flake.nix`, `guix.scm`, `.guix-channel`, and `.devcontainer/` remain
+in the tree as **experimental** paths — kept, not maintained.
+
+Pre-built release binaries for `linux-x86_64`, `linux-aarch64`,
+`macos-arm64`, and `windows-x86_64` are published by the release
+workflow (V-L3-L1, #58) with `.sha256` companions.
 
 == Integration with TypedQLiser
 
 VeriSimiser works alongside
 https://github.com/hyperpolymath/typedqliser[TypedQLiser]:
 
-* TypedQLiser type-checks your queries (compile-time, no runtime cost)
-* VeriSimiser augments your database with octad concerns (runtime)
-* Together: formally verified queries against an augmented database
+* TypedQLiser type-checks your queries (compile-time, no runtime cost).
+* VeriSimiser augments your database with concerns capabilities
+  (runtime).
+* Together: formally verified queries against an augmented database.
 
 == Status
 
-**Pre-alpha.** Architecture defined, octad ontology pinned (ADR-0001),
-codegen scaffolding in place. The next implementation milestone is V-L1-C1:
-end-to-end SQLite Tier 1 piggyback (`sqlite3_update_hook` →
-`verisimdb_provenance_log` sidecar). See `ROADMAP.adoc`.
+**Pre-alpha.** Architecture defined, tier system designed, the eight
+concerns canonical per ADR-0004. Tier 1 is the priority implementation;
+the Temporal drift detector (V-L1-E2 / #49) is the first ADR-0003
+category shipped end-to-end.
 
 Part of the https://github.com/hyperpolymath/iseriser[-iser family].
 **#3 priority** (after TypedQLiser and Chapeliser).
