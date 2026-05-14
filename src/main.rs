@@ -19,9 +19,19 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use verisimiser::{abi, codegen, manifest};
 
+/// Long version string: `<crate-version> (<git-describe>, built <date>)`.
+const LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("VERISIMISER_GIT_DESCRIBE"),
+    ", built ",
+    env!("VERISIMISER_BUILD_DATE"),
+    ")",
+);
+
 /// VeriSimiser — augment any database with VeriSimDB octad capabilities.
 #[derive(Parser)]
-#[command(name = "verisimiser", version, about, long_about = None)]
+#[command(name = "verisimiser", version = LONG_VERSION, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -85,9 +95,18 @@ enum Commands {
     Status {
         #[arg(short, long, default_value = "verisimiser.toml")]
         manifest: String,
+        /// Emit a structured JSON report instead of human-readable text.
+        #[arg(long)]
+        json: bool,
     },
     /// Show the octad modalities and which tiers they belong to.
     Octad,
+    /// Print version, git-sha, and build-date.
+    Version {
+        /// Emit JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -189,14 +208,34 @@ fn main() -> Result<()> {
             Ok(())
         }
 
-        Commands::Status { manifest } => {
+        Commands::Status { manifest, json } => {
             let m = manifest::load_manifest(&manifest)?;
-            manifest::print_status(&m);
+            if json {
+                let report = manifest::status_report(&m);
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                manifest::print_status(&m);
+            }
             Ok(())
         }
 
         Commands::Octad => {
             print_octad();
+            Ok(())
+        }
+
+        Commands::Version { json } => {
+            if json {
+                let report = serde_json::json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "git_sha": env!("VERISIMISER_GIT_SHA"),
+                    "git_describe": env!("VERISIMISER_GIT_DESCRIBE"),
+                    "build_date": env!("VERISIMISER_BUILD_DATE"),
+                });
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}", LONG_VERSION);
+            }
             Ok(())
         }
     }
