@@ -126,7 +126,8 @@ fn generate_provenance_table() -> String {
      \x20   actor         TEXT NOT NULL,\n\
      \x20   timestamp     TEXT NOT NULL,  -- ISO 8601\n\
      \x20   before_snapshot TEXT,          -- JSON of entity state before operation\n\
-     \x20   transformation  TEXT           -- description of transformation applied\n\
+     \x20   transformation  TEXT,          -- description of transformation applied\n\
+     \x20   CHECK (operation IN ('insert','update','delete','transform'))\n\
      );\n\
      CREATE INDEX IF NOT EXISTS idx_provenance_entity ON verisimdb_provenance_log(entity_id);\n\
      CREATE INDEX IF NOT EXISTS idx_provenance_table  ON verisimdb_provenance_log(table_name);\n\n"
@@ -153,7 +154,8 @@ fn generate_lineage_table() -> String {
      \x20   derivation_type TEXT NOT NULL,  -- copy, transform, aggregate, join, filter\n\
      \x20   description     TEXT,\n\
      \x20   created_at      TEXT NOT NULL,  -- ISO 8601\n\
-     \x20   CHECK (source_entity <> target_entity OR source_table <> target_table)\n\
+     \x20   CHECK (source_entity <> target_entity OR source_table <> target_table),\n\
+     \x20   CHECK (derivation_type IN ('copy','transform','aggregate','join','filter'))\n\
      );\n\
      CREATE INDEX IF NOT EXISTS idx_lineage_source ON verisimdb_lineage_graph(source_entity);\n\
      CREATE INDEX IF NOT EXISTS idx_lineage_target ON verisimdb_lineage_graph(target_entity);\n\n"
@@ -196,7 +198,8 @@ fn generate_access_policy_table() -> String {
      \x20   access_level  TEXT NOT NULL,   -- read, write, admin, deny\n\
      \x20   condition     TEXT,            -- SQL-like filter condition\n\
      \x20   created_at    TEXT NOT NULL,   -- ISO 8601\n\
-     \x20   active        INTEGER NOT NULL DEFAULT 1\n\
+     \x20   active        INTEGER NOT NULL DEFAULT 1,\n\
+     \x20   CHECK (access_level IN ('read','write','admin','deny'))\n\
      );\n\
      CREATE INDEX IF NOT EXISTS idx_access_table ON verisimdb_access_policies(target_table);\n\
      CREATE INDEX IF NOT EXISTS idx_access_principal ON verisimdb_access_policies(principal);\n\n"
@@ -211,12 +214,13 @@ fn generate_simulation_table() -> String {
     "-- Simulation: what-if branching and sandbox queries\n\
      CREATE TABLE IF NOT EXISTS verisimdb_simulation_branches (\n\
      \x20   branch_id    TEXT PRIMARY KEY,\n\
-     \x20   parent_branch TEXT,           -- NULL for root branch\n\
+     \x20   parent_branch TEXT REFERENCES verisimdb_simulation_branches(branch_id),  -- NULL for root\n\
      \x20   name         TEXT NOT NULL,\n\
      \x20   description  TEXT,\n\
      \x20   created_at   TEXT NOT NULL,   -- ISO 8601\n\
      \x20   merged_at    TEXT,            -- ISO 8601, NULL if not merged\n\
-     \x20   status       TEXT NOT NULL DEFAULT 'active'  -- active, merged, abandoned\n\
+     \x20   status       TEXT NOT NULL DEFAULT 'active',  -- active, merged, abandoned\n\
+     \x20   CHECK (status IN ('active','merged','abandoned'))\n\
      );\n\n\
      CREATE TABLE IF NOT EXISTS verisimdb_simulation_deltas (\n\
      \x20   delta_id    TEXT PRIMARY KEY,\n\
@@ -283,6 +287,48 @@ mod tests {
         assert!(ddl.contains("verisimdb_temporal_versions"));
         assert!(ddl.contains("verisimdb_access_policies"));
         assert!(ddl.contains("verisimdb_simulation_branches"));
+    }
+
+    /// All four enum-shape columns must be CHECK-constrained, and
+    /// simulation_branches.parent_branch must be a self-referencing FK
+    /// (closes #43).
+    #[test]
+    fn test_overlay_has_enum_checks_and_fk() {
+        let schema = test_schema();
+        let octad = OctadConfig {
+            enable_provenance: true,
+            enable_lineage: true,
+            enable_temporal: true,
+            enable_access_control: true,
+            enable_constraints: true,
+            enable_simulation: true,
+        };
+        let ddl = generate_sidecar_schema(&schema, &octad);
+
+        // Self-referencing FK on parent_branch.
+        assert!(
+            ddl.contains("parent_branch TEXT REFERENCES verisimdb_simulation_branches(branch_id)"),
+            "simulation_branches.parent_branch is missing the self-referencing FK"
+        );
+        // Enum CHECKs.
+        assert!(
+            ddl.contains("CHECK (status IN ('active','merged','abandoned'))"),
+            "simulation_branches.status enum CHECK missing"
+        );
+        assert!(
+            ddl.contains("CHECK (operation IN ('insert','update','delete','transform'))"),
+            "provenance_log.operation enum CHECK missing"
+        );
+        assert!(
+            ddl.contains("CHECK (access_level IN ('read','write','admin','deny'))"),
+            "access_policies.access_level enum CHECK missing"
+        );
+        assert!(
+            ddl.contains(
+                "CHECK (derivation_type IN ('copy','transform','aggregate','join','filter'))"
+            ),
+            "lineage_graph.derivation_type enum CHECK missing"
+        );
     }
 
     /// Lineage edges must refuse self-loops at the storage layer
