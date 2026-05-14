@@ -1,0 +1,53 @@
+= Architecture Decision Record: 0002-no-aspirational-justfile-recipes
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 2. Keep the Justfile honest — no recipes for unbuilt CLI subcommands
+
+Date: 2026-05-14
+
+## Status
+
+Accepted
+
+## Context
+
+The Justfile had recipes — `augment`, `check-octad`, `migrate` — wrapping
+`cargo run -- <subcmd> …` calls for clap subcommands that do not exist in
+`src/main.rs`. The clap CLI exposes only `init / generate / start / drift /
+provenance / history / status / octad`. Anyone invoking `just augment` would
+hit a clap "unrecognized subcommand" error.
+
+This is the "wishlist as code" anti-pattern: the build automation advertises
+capabilities the program does not have. Readers cannot tell which recipes
+work, contributors waste time discovering broken paths, and future grep-driven
+refactors get false positives.
+
+## Decision
+
+Adopt **Option A** from V-L3-C2: delete the aspirational recipes from the
+Justfile. New CLI subcommands earn their Justfile recipe only after they
+exist and have a stable signature.
+
+If the capabilities are wanted (and at least `augment` looks plausible
+given the project's framing), the path forward is to open a per-subcommand
+issue with a proposed clap signature, build it, then add the Justfile
+recipe in the same PR. The Justfile is not the place to track intent —
+the issue tracker is.
+
+## Consequences
+
+### Positive
+
+- `just <recipe>` is reliable: every recipe runs against real code.
+- `just --list` becomes an honest inventory of what the project can do.
+- Removes one source of grep noise during refactors.
+
+### Negative
+
+- The intent that the aspirational recipes encoded is now only in the
+  issue tracker; if it loses follow-up there, the wish disappears entirely.
+
+### Neutral
+
+- The recipes were already broken; nothing that worked before stops working.

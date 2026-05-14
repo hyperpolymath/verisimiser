@@ -50,10 +50,6 @@ install:
 assail:
     @command -v panic-attack >/dev/null 2>&1 && panic-attack assail . || echo "panic-attack not found — install from https://github.com/hyperpolymath/panic-attacker"
 
-# --- Domain-Specific Recipes (verisimiser) ---
-
-# Augment a database with VeriSimDB octad\naugment DB_URL:\n    cargo run -- augment {{DB_URL}}\n\n# Check octad layer completeness\ncheck-octad DB_URL:\n    cargo run -- check-octad {{DB_URL}}\n\n# Generate migration scripts\nmigrate DB_URL:\n    cargo run -- migrate {{DB_URL}}
-
 # Run contractile checks
 contractile-check:
     @echo "Running contractile validation..."
