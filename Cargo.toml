@@ -3,6 +3,7 @@
 name = "verisimiser"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>"]
 description = "Augment any database with VeriSimDB octad capabilities — drift detection, provenance, temporal versioning, and modality overlays"
 license-file = "LICENSE"
