@@ -141,8 +141,10 @@ fn main() -> Result<()> {
             // Create output directory.
             std::fs::create_dir_all(&output)?;
 
-            // Generate sidecar overlay schema.
-            let overlay_ddl = codegen::overlay::generate_sidecar_schema(&schema, &m.octad);
+            // Generate sidecar overlay schema. Errors here surface invalid
+            // table/column identifiers in the parsed schema before they
+            // reach disk.
+            let overlay_ddl = codegen::overlay::generate_sidecar_schema(&schema, &m.octad)?;
             let overlay_path = format!("{}/sidecar_schema.sql", output);
             std::fs::write(&overlay_path, &overlay_ddl)?;
             println!("Generated sidecar schema: {}", overlay_path);

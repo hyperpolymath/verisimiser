@@ -34,8 +34,24 @@ use crate::manifest::OctadConfig;
 ///   dimension tables to generate.
 ///
 /// # Returns
-/// A string containing the complete DDL for the sidecar database.
-pub fn generate_sidecar_schema(schema: &ParsedSchema, octad: &OctadConfig) -> String {
+/// `Ok(String)` with the complete DDL on success. `Err` if any table or
+/// column name in `schema` is not a valid SQL identifier per
+/// [`crate::codegen::ident::validate_identifier`] — guards against SQL
+/// injection via parsed schema input. Closes #39.
+pub fn generate_sidecar_schema(
+    schema: &ParsedSchema,
+    octad: &OctadConfig,
+) -> anyhow::Result<String> {
+    use crate::codegen::ident::validate_identifier;
+
+    // Fail fast on any unsafe identifier flowing into generated DDL.
+    for table in &schema.tables {
+        validate_identifier(&table.name, "table name")?;
+        for column in &table.columns {
+            validate_identifier(&column.name, "column name")?;
+        }
+    }
+
     let mut ddl = String::new();
 
     ddl.push_str("-- SPDX-License-Identifier: PMPL-1.0-or-later\n");
@@ -65,7 +81,7 @@ pub fn generate_sidecar_schema(schema: &ParsedSchema, octad: &OctadConfig) -> St
         ddl.push_str(&generate_simulation_table());
     }
 
-    ddl
+    Ok(ddl)
 }
 
 /// Generate the metadata table that tracks which target tables are augmented.
@@ -284,7 +300,7 @@ mod tests {
             enable_constraints: true,
             enable_simulation: true,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
 
         assert!(ddl.contains("verisimdb_metadata"));
         assert!(ddl.contains("verisimdb_provenance_log"));
@@ -308,7 +324,7 @@ mod tests {
             enable_constraints: true,
             enable_simulation: true,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
 
         // Self-referencing FK on parent_branch.
         assert!(
@@ -351,7 +367,7 @@ mod tests {
             enable_constraints: false,
             enable_simulation: false,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
         assert!(ddl.contains("verisimdb_temporal_versions"));
         assert!(
             ddl.contains(
@@ -379,7 +395,7 @@ mod tests {
             enable_constraints: false,
             enable_simulation: false,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
         assert!(ddl.contains("verisimdb_lineage_graph"));
         // The exact CHECK clause must be present in the emitted DDL.
         assert!(
@@ -399,7 +415,7 @@ mod tests {
             enable_constraints: false,
             enable_simulation: false,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
 
         // Metadata is always generated.
         assert!(ddl.contains("verisimdb_metadata"));
@@ -415,7 +431,7 @@ mod tests {
     fn test_metadata_seeds_table_info() {
         let schema = test_schema();
         let octad = OctadConfig::default();
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
 
         assert!(ddl.contains("INSERT OR IGNORE INTO verisimdb_metadata"));
         assert!(ddl.contains("'posts'"));
