@@ -34,6 +34,13 @@ enum Commands {
         /// Database backend: postgresql, sqlite, or mongodb.
         #[arg(short, long, default_value = "postgresql")]
         database: String,
+        /// Project name to set under [project].name. Defaults to the value
+        /// from `ProjectConfig::default()` if not provided.
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Overwrite an existing verisimiser.toml instead of erroring.
+        #[arg(short, long)]
+        force: bool,
     },
     /// Parse the target database schema and generate sidecar overlay + interceptors.
     Generate {
@@ -86,7 +93,11 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { database } => manifest::init_manifest(&database),
+        Commands::Init {
+            database,
+            name,
+            force,
+        } => manifest::init_manifest(&database, name.as_deref(), force),
 
         Commands::Generate { manifest, output } => {
             let m = manifest::load_manifest(&manifest)?;
