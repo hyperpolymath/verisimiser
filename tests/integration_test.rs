@@ -75,6 +75,7 @@ fn test_full_pipeline_blog_schema() {
         enable_lineage: true,
         enable_temporal: true,
         enable_access_control: true,
+        enable_constraints: true,
         enable_simulation: false,
     };
     let overlay_ddl = overlay::generate_sidecar_schema(&schema, &octad);

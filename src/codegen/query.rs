@@ -343,6 +343,7 @@ mod tests {
             enable_lineage: true,
             enable_temporal: true,
             enable_access_control: true,
+            enable_constraints: true,
             enable_simulation: false,
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
@@ -364,6 +365,7 @@ mod tests {
             enable_lineage: false,
             enable_temporal: false,
             enable_access_control: false,
+            enable_constraints: false,
             enable_simulation: false,
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
@@ -384,6 +386,7 @@ mod tests {
             enable_lineage: false,
             enable_temporal: false,
             enable_access_control: false,
+            enable_constraints: false,
             enable_simulation: false,
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
@@ -403,6 +406,7 @@ mod tests {
             enable_lineage: false,
             enable_temporal: true,
             enable_access_control: false,
+            enable_constraints: false,
             enable_simulation: false,
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
