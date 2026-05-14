@@ -107,6 +107,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Validate a manifest. Exit code is non-zero if any check fails.
+    Validate {
+        #[arg(short, long, default_value = "verisimiser.toml")]
+        manifest: String,
+        /// Emit the structured ValidationReport as JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -224,6 +232,36 @@ fn main() -> Result<()> {
         Commands::Octad => {
             print_octad();
             Ok(())
+        }
+
+        Commands::Validate { manifest, json } => {
+            let report = manifest::validate_manifest(&manifest);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Validating {} ...", report.manifest);
+                for check in &report.checks {
+                    let mark = if check.passed { "ok " } else { "FAIL" };
+                    println!("  [{}] {} — {}", mark, check.name, check.description);
+                    if let Some(detail) = &check.detail {
+                        println!("        {}", detail);
+                    }
+                }
+                if report.passed {
+                    println!("All {} checks passed.", report.checks.len());
+                } else {
+                    println!(
+                        "{}/{} checks failed.",
+                        report.failed_count(),
+                        report.checks.len()
+                    );
+                }
+            }
+            if report.passed {
+                Ok(())
+            } else {
+                anyhow::bail!("manifest validation failed");
+            }
         }
 
         Commands::Version { json } => {
