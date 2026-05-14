@@ -180,7 +180,13 @@ fn generate_provenance_view(
         table_name
     );
 
-    // Use a subquery to get the latest provenance entry per entity.
+    // Select the latest provenance row per entity via ROW_NUMBER() over a
+    // PARTITION-by-entity / ORDER-by-timestamp-DESC window. The previous
+    // correlated MAX(timestamp) subquery referenced the outer
+    // `verisimdb_provenance_log` table by base-name, which is ambiguous
+    // when the same table appears in nested scopes and produced wrong
+    // (or no) "latest" rows depending on planner choices. Closes #40.
+    // ROW_NUMBER is supported on PostgreSQL (always) and SQLite ≥ 3.25.
     format!(
         "{comment}\
          CREATE VIEW IF NOT EXISTS verisimdb_{table_name}_with_provenance AS\n\
@@ -193,14 +199,13 @@ fn generate_provenance_view(
          FROM {table_name}\n\
          LEFT JOIN (\n\
          \x20   SELECT entity_id, operation, actor, timestamp, hash\n\
-         \x20   FROM verisimdb_provenance_log\n\
-         \x20   WHERE table_name = '{table_name}'\n\
-         \x20   AND timestamp = (\n\
-         \x20       SELECT MAX(p2.timestamp)\n\
-         \x20       FROM verisimdb_provenance_log p2\n\
-         \x20       WHERE p2.entity_id = verisimdb_provenance_log.entity_id\n\
-         \x20       AND p2.table_name = '{table_name}'\n\
-         \x20   )\n\
+         \x20   FROM (\n\
+         \x20       SELECT entity_id, operation, actor, timestamp, hash,\n\
+         \x20              ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY timestamp DESC) AS _rn\n\
+         \x20       FROM verisimdb_provenance_log\n\
+         \x20       WHERE table_name = '{table_name}'\n\
+         \x20   ) ranked\n\
+         \x20   WHERE _rn = 1\n\
          ) prov ON prov.entity_id = ({entity_id_expr});\n\n",
         columns = column_list.join(",\n"),
     )
@@ -396,6 +401,35 @@ mod tests {
         assert!(interceptor.temporal_view.is_none());
         assert!(interceptor.lineage_query.is_none());
         assert!(interceptor.access_filter.is_none());
+    }
+
+    /// The provenance view must use a window-function `ROW_NUMBER()` pattern
+    /// instead of the old (broken) correlated MAX(timestamp) subquery.
+    /// Closes #40.
+    #[test]
+    fn test_provenance_view_uses_window_function_for_latest_per_entity() {
+        let schema = test_schema();
+        let octad = OctadConfig {
+            enable_provenance: true,
+            enable_lineage: false,
+            enable_temporal: false,
+            enable_access_control: false,
+            enable_constraints: false,
+            enable_simulation: false,
+        };
+        let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
+        let view = interceptors[0]
+            .provenance_view
+            .as_ref()
+            .expect("provenance view present when enabled");
+        assert!(
+            view.contains("ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY timestamp DESC)"),
+            "provenance view should use window-function latest-per-entity"
+        );
+        assert!(
+            !view.contains("MAX(p2.timestamp)"),
+            "old correlated MAX(timestamp) pattern must be gone"
+        );
     }
 
     #[test]
