@@ -278,6 +278,68 @@ impl Default for SidecarConfig {
     }
 }
 
+#[cfg(test)]
+mod load_manifest_tests {
+    use super::load_manifest;
+
+    /// Malformed TOML must produce a file:line:col error (closes #55).
+    #[test]
+    fn malformed_manifest_reports_line_and_column() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("verisimiser.toml");
+        // Line 3 has an obviously broken assignment (key with no `=`).
+        let bad = "[project]\n\
+                   name = \"ok\"\n\
+                   broken value\n";
+        std::fs::write(&path, bad).expect("write");
+
+        let err = load_manifest(path.to_str().unwrap()).expect_err("malformed TOML must fail");
+        let msg = err.to_string();
+        // Must include path, and a `:N:M:` span indicator.
+        assert!(
+            msg.contains("verisimiser.toml"),
+            "error must include the manifest path; got: {msg}"
+        );
+        // The exact line/column varies with toml's internal pointer, but
+        // there must be a `:<digit>:<digit>:` somewhere in the message.
+        let span_re = regex_like_line_col(&msg);
+        assert!(
+            span_re,
+            "error must include filename:line:col; got: {msg}"
+        );
+    }
+
+    /// Lightweight substitute for a regex match (no regex crate added):
+    /// look for `:N:M:` where N and M are 1+ digits each.
+    fn regex_like_line_col(msg: &str) -> bool {
+        let bytes = msg.as_bytes();
+        let mut i = 0;
+        while i + 4 < bytes.len() {
+            if bytes[i] == b':' {
+                let mut j = i + 1;
+                let mut had_digit_1 = false;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                    had_digit_1 = true;
+                }
+                if had_digit_1 && j < bytes.len() && bytes[j] == b':' {
+                    let mut k = j + 1;
+                    let mut had_digit_2 = false;
+                    while k < bytes.len() && bytes[k].is_ascii_digit() {
+                        k += 1;
+                        had_digit_2 = true;
+                    }
+                    if had_digit_2 && k < bytes.len() && bytes[k] == b':' {
+                        return true;
+                    }
+                }
+            }
+            i += 1;
+        }
+        false
+    }
+}
+
 // --- Legacy config structs (backward compatibility) ---
 
 /// Legacy [verisimiser] section.
@@ -351,10 +413,34 @@ fn default_sidecar_path() -> String {
 /// Load and parse a `verisimiser.toml` manifest from the given file path.
 ///
 /// Returns an error if the file cannot be read or the TOML is malformed.
+/// On parse failure, the error message includes `path:line:col` extracted
+/// from the underlying `toml::de::Error::span()` so editors can jump
+/// straight to the offending position. Closes #55.
 pub fn load_manifest(path: &str) -> Result<Manifest> {
     let contents = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read manifest: {}", path))?;
-    toml::from_str(&contents).with_context(|| format!("Failed to parse manifest: {}", path))
+    toml::from_str::<Manifest>(&contents).map_err(|err| {
+        let (line, col) = err
+            .span()
+            .map(|range| byte_offset_to_line_col(&contents, range.start))
+            .unwrap_or((1, 1));
+        anyhow::anyhow!("{}:{}:{}: {}", path, line, col, err.message())
+    })
+}
+
+/// Convert a UTF-8 byte offset within `text` to a 1-based `(line, col)`
+/// pair. Used by [`load_manifest`] to translate a `toml::de::Error::span()`
+/// into editor-style `file:line:col` output.
+fn byte_offset_to_line_col(text: &str, offset: usize) -> (usize, usize) {
+    let prefix = &text[..offset.min(text.len())];
+    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+    let col = prefix
+        .bytes()
+        .rev()
+        .take_while(|b| *b != b'\n')
+        .count()
+        + 1;
+    (line, col)
 }
 
 /// Generate a new `verisimiser.toml` manifest file with the Phase 1 schema.
