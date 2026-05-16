@@ -14,69 +14,26 @@
 // `abi::ProvenanceEntry::compute_hash` (domain-tagged + length-prefixed
 // — see ADR-0002 / #27); this module just persists the entries.
 
-use crate::abi::ProvenanceEntry;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, TransactionBehavior};
-use serde::{Deserialize, Serialize};
 
 // =========================================================================
-// Public re-export: the canonical entry shape
+// Canonical entry shape
 // =========================================================================
 
-/// A single link in the provenance hash chain. Mirrors
-/// `abi::ProvenanceEntry` 1:1 — kept here for backward compatibility
-/// with code that imported `tier1::provenance::ProvenanceRecord`. New
-/// callers should prefer the canonical type in `abi`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProvenanceRecord {
-    pub hash: String,
-    pub previous_hash: String,
-    pub entity_id: String,
-    pub operation: String,
-    pub actor: String,
-    pub timestamp: DateTime<Utc>,
-    pub before_snapshot: Option<String>,
-    pub transformation: Option<String>,
-}
-
-impl ProvenanceRecord {
-    /// Backward-compat shim. Computes the canonical hash via
-    /// `abi::ProvenanceEntry::compute_hash` rather than the older
-    /// string-based form.
-    pub fn compute_hash(
-        previous_hash: &str,
-        entity_id: &str,
-        operation: &str,
-        actor: &str,
-        timestamp: &DateTime<Utc>,
-        before_snapshot: Option<&str>,
-        transformation: Option<&str>,
-    ) -> String {
-        ProvenanceEntry::compute_hash(
-            previous_hash,
-            entity_id,
-            operation,
-            actor,
-            timestamp,
-            before_snapshot,
-            transformation,
-        )
-    }
-
-    /// Verify that this record's stored hash matches a fresh recompute.
-    pub fn verify(&self) -> bool {
-        let expected = Self::compute_hash(
-            &self.previous_hash,
-            &self.entity_id,
-            &self.operation,
-            &self.actor,
-            &self.timestamp,
-            self.before_snapshot.as_deref(),
-            self.transformation.as_deref(),
-        );
-        self.hash == expected
-    }
-}
+// The provenance entry type is defined once, in `crate::abi`. It is the
+// canonical representation used across the Rust CLI, the Idris2 ABI
+// proofs, and the Zig FFI bridge, and it is the type persisted at the
+// SQLite boundary by `append_provenance` below.
+//
+// This module previously carried a byte-for-byte duplicate struct
+// (same fields, its own `compute_hash`/`verify`) under a different
+// name. It was orphaned — nothing constructed it — and a second copy of
+// the hash function is an integrity hazard: a future change to one
+// `compute_hash` would silently leave the other broken (#26). The
+// duplicate has been deleted; the canonical type is re-exported here so
+// `tier1::provenance::ProvenanceEntry` resolves to the one definition.
+pub use crate::abi::ProvenanceEntry;
 
 // =========================================================================
 // SQLite sidecar schema
