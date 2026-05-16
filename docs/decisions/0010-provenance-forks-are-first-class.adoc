@@ -1,0 +1,177 @@
+= Architecture Decision Record: 0010-provenance-forks-are-first-class
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 10. Provenance forks are first-class; prevent duplicates, not divergence
+
+Date: 2026-05-16
+
+## Status
+
+Proposed (design + failing test; tracks #31 and #32)
+
+## Context
+
+Two issues, taken together, design the provenance chain into a
+structure that *cannot represent a forked history*:
+
+* **#31 (V-L2-L1)** — a per-entity write lock. The current
+  implementation in `src/tier1/provenance.rs::append_provenance`
+  already wraps read-head + insert + update-head in a
+  `BEGIN IMMEDIATE` transaction, and `verisimdb_provenance_chain_head`
+  holds exactly one `head_hash` per `entity_id`. The chain head is a
+  *single scalar*: there is no way to record that an entity has two
+  valid tips.
+* **#32 (V-L2-L2)** — proposes
+  `CREATE UNIQUE INDEX ux_provenance_chain
+  ON verisimdb_provenance_log(entity_id, previous_hash)`.
+  This makes it *structurally impossible* to insert a second row that
+  chains from the same predecessor.
+
+Both issues frame forks as purely adversarial ("a second writer that
+sneaks past the lock"). That framing is incomplete. Legitimate
+divergence is a real, expected event in this system:
+
+* **Partitioned / replicated / offline writers.** The threat-model
+  doc itself (section 5, OQ-2 external anchoring; and ADR-0006
+  simulation semantics) anticipates replicated and sandbox writers.
+  Two honest writers that are network-partitioned both legitimately
+  extend the chain from the last shared tip. When they reconcile,
+  *both* branches are true history and must be retained for audit and
+  later merge.
+* **Simulation / what-if branches** (Simulation octad, ADR-0006). A
+  what-if branch is, by construction, a provenance fork from a real
+  entity's chain.
+
+The integrity property we actually want is **tamper-evidence and
+no silent loss**, not **linearity**. The current/proposed design
+inverts this: a `UNIQUE INDEX(entity_id, previous_hash)` does not
+*detect* a fork — it *rejects the second row at insert time*. The
+second writer's legitimate history is never recorded. The system
+cannot answer "did this entity's history diverge?" because the
+divergent row was thrown away. **A fork that cannot be written
+cannot be detected or audited. That is the integrity defect.**
+
+A hash chain that forbids forks is equivalent to claiming the world
+never partitions. It does.
+
+## Decision
+
+**Provenance forks are a first-class, representable state. The
+storage layer prevents *duplicate* records; it does not prevent
+*divergent* ones. Detection and reconciliation of forks is an
+explicit, queryable operation, not an insert-time rejection.**
+
+### 1. Schema (#32): duplicate-prevention, not fork-prevention
+
+Do **not** add `UNIQUE INDEX(entity_id, previous_hash)`. Instead:
+
+* The `hash` column is already `PRIMARY KEY`. Because the hash
+  preimage is domain-tagged and covers `previous_hash`, `entity_id`,
+  `operation`, `actor`, the canonical timestamp, `before_snapshot`
+  and `transformation` (see ADR-0002 / #27), an *exact duplicate*
+  record necessarily collides on `hash` and is already rejected.
+  This is the correct duplicate guard: it forbids re-inserting the
+  *same* entry while saying nothing about two *different* entries
+  that share a `previous_hash`.
+* Add a non-unique index to make fork *detection* O(log n):
++
+[source,sql]
+----
+CREATE INDEX IF NOT EXISTS idx_provenance_predecessor
+  ON verisimdb_provenance_log(entity_id, previous_hash);
+----
++
+Two children of the same predecessor are two rows with the same
+`(entity_id, previous_hash)` and distinct `hash` — a `GROUP BY
+... HAVING COUNT(*) > 1` over this index is the fork query.
+
+### 2. Chain head (#31): a set of heads, not a scalar
+
+`verisimdb_provenance_chain_head` becomes
+`verisimdb_provenance_chain_heads` keyed by `(entity_id, head_hash)`:
+an entity may have one head (linear, the common case) or several
+(forked). `append_provenance` keeps its `BEGIN IMMEDIATE`
+transaction — serialisation is still desirable to prevent *racing
+duplicate* appends from one node — but:
+
+* It takes the parent tip explicitly (or, for the linear
+  fast-path, the unique current head if exactly one exists).
+* On insert it **removes the parent hash from the head set and
+  adds the new hash**, so a normal append stays linear.
+* A deliberate fork (`append_provenance_fork(... from_hash ...)`)
+  inserts a new entry whose `previous_hash` is a *non-tip*
+  ancestor, and *adds* a head without removing one. The entity now
+  has two heads; both persist.
+
+### 3. Detection / query surface
+
+Add `fork_points(conn, entity_id) -> Vec<ForkPoint>` returning every
+predecessor hash with >1 child, and extend `verify_chain` to verify
+*per-branch* (walk each head back to genesis; every branch must be
+internally hash-consistent) rather than assuming one linear walk.
+
+### 4. Data migration for existing sidecars
+
+* The single-column `verisimdb_provenance_chain_head(entity_id PK,
+  head_hash)` is migrated to `verisimdb_provenance_chain_heads(
+  entity_id, head_hash, PRIMARY KEY(entity_id, head_hash))` by an
+  idempotent `CREATE TABLE IF NOT EXISTS ... ; INSERT ... SELECT`
+  copy guarded by a `sqlite_master` existence check (the old table
+  is left in place for one release, then dropped — no destructive
+  step in the migration that ships with this change).
+* **No `UNIQUE INDEX(entity_id, previous_hash)` is ever created**,
+  so there is no risk of an existing sidecar that legitimately
+  already contains a fork failing to open. (Had #32 shipped first,
+  this migration would have to detect and quarantine such rows; by
+  not shipping it we avoid that hazard entirely — note this in the
+  #32 thread.)
+* `verisimdb_provenance_log` itself is unchanged (same columns,
+  same `hash` PK). Existing rows remain valid and verifiable.
+
+### 5. Test plan (the failing test ships in this branch)
+
+`tests/provenance_fork_test.rs`:
+
+* `fork_can_be_written_and_both_branches_persist` — genesis +
+  child A; then a *second* child B chained from the genesis
+  (the fork). Assert: both A and B rows exist, the log has 3
+  rows for the entity, and the entity has 2 chain heads. **This
+  test fails today** (`append_provenance` cannot express "chain
+  from a non-tip ancestor"; there is no multi-head table; with #32
+  applied the second insert would be a constraint violation).
+* `fork_points_detects_the_divergence` — after writing the fork,
+  `fork_points(conn, entity)` returns the genesis hash as a fork
+  point with two children.
+* `each_branch_verifies_independently` — `verify_chain` returns
+  `true` for a forked entity (each branch is hash-consistent),
+  proving divergence is not conflated with tampering.
+* Retained guard: `exact_duplicate_entry_is_rejected` — inserting
+  a byte-identical entry twice fails on the `hash` PK (the
+  duplicate guard the unique index was *trying* to provide,
+  achieved correctly).
+
+## Consequences
+
+* The provenance model can represent and audit reality (partitions,
+  replicas, simulation branches) instead of silently discarding the
+  losing writer's history.
+* "Single-writer per entity" stops being a *correctness* requirement
+  and becomes a *policy* a deployment may opt into (reject on >1
+  head) — enforced in application code, not welded into the schema.
+* Slightly more complex head bookkeeping and a per-branch
+  `verify_chain`. Acceptable: linearity was never a security
+  property, only an availability assumption.
+* The threat-model doc (`docs/theory/provenance-threat-model.adoc`
+  section "Single writer") and README §"Provenance Tracking" must be
+  updated to describe forks as detected-and-retained rather than
+  prevented. (Tracked as follow-up in the implementing PR.)
+
+## References
+
+* #31 (V-L2-L1) — write-path lock
+* #32 (V-L2-L2) — proposed unique index (this ADR declines it)
+* #26 / PR #103 — provenance type dedup (unblocker; landed first)
+* ADR-0002 — domain-tagged hash preimage (the real duplicate guard)
+* ADR-0006 — simulation semantics (a legitimate fork source)
+* `docs/theory/provenance-threat-model.adoc` §5
