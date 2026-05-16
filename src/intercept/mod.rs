@@ -3,10 +3,10 @@
 //
 // Database interception layer.
 // Configurable per target database:
-//   PostgreSQL: logical replication / pg_notify / triggers
-//   MySQL:      binlog CDC / triggers
-//   SQLite:     sqlite3_update_hook / WAL monitoring
-//   MongoDB:    change streams
-//   App-level:  middleware / ORM hooks
+//   PostgreSQL: logical replication / pg_notify / triggers   (TODO)
+//   MySQL:      binlog CDC / triggers                        (TODO)
+//   SQLite:     sqlite3_update_hook / WAL monitoring         (V-L1-C1, this module)
+//   MongoDB:    change streams                               (TODO)
+//   App-level:  middleware / ORM hooks                       (TODO)
 
-// TODO: implement per-database interception strategies
+pub mod sqlite;

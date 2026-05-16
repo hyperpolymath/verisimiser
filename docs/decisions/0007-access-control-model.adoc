@@ -1,0 +1,212 @@
+= Architecture Decision Record: 0007-access-control-model
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 7. Access control: principals, roles, deny-wins, typed predicate
+
+Date: 2026-05-14
+
+## Status
+
+Accepted
+
+## Context
+
+`verisimdb_access_policies.condition` is currently unbounded `TEXT`.
+A user can write `"true OR users.id = (SELECT MAX(...))"` and the
+codegen layer will obediently splice it into a generated view. The
+table has no model of:
+
+* **Principal identity**: what counts as a principal? A literal
+  user-id? A role name? An arbitrary string?
+* **Role composition**: can `principal = "engineering"` match
+  someone with role `"engineering"`? Can roles inherit?
+* **Policy precedence**: when multiple rows match (e.g. an
+  `allow` row and a `deny` row for the same `(table, column,
+  principal)`), which wins?
+* **Interaction with views**: provenance/temporal views currently
+  bypass access policies entirely. Should they?
+* **Free-form SQL in `condition`**: V-L2-G1 (#39) shut the
+  injection door on identifiers, but the `condition` column is
+  still free-form SQL spliced into view definitions at generation
+  time. A typed predicate language is needed.
+
+This ADR pins each of these choices and unblocks the typed-AST
+follow-up.
+
+## Decision
+
+### 7.1 Principal identity
+
+A principal is a **string with a typed prefix**:
+
+* `user:<id>` — a literal end-user identifier (whatever the
+  application authenticates).
+* `role:<name>` — a role name. Roles are independent of the
+  identity provider; they are app-level groupings (e.g.
+  `role:analyst`, `role:auditor`).
+* `service:<name>` — a non-human actor (cron job, ingest
+  service, ETL pipeline).
+* `*` — the universal principal. Matches every actor. Useful for
+  blanket deny-by-default policies.
+
+The `principal` column in `verisimdb_access_policies` stores the
+full prefixed string. A future codegen-layer CHECK can validate
+the prefix (`principal LIKE 'user:%' OR principal LIKE 'role:%' OR
+principal LIKE 'service:%' OR principal = '*'`).
+
+### 7.2 Role composition
+
+Roles are **non-hierarchical** in this version.
+
+* An actor's role set is supplied to verisimiser at query time
+  via a `SET app.roles = 'role:analyst,role:auditor'` -style
+  session variable (or its backend-specific equivalent).
+* A policy with `principal = "role:analyst"` matches an actor
+  iff `role:analyst` is in that session's role set.
+* Multi-role inheritance (`role:senior_analyst inherits
+  role:analyst`) is **out of scope**. A future ADR can add it as
+  a separate dimension if real deployments need it.
+
+This choice keeps the matching algorithm a flat set membership.
+Easy to audit, easy to express in a view.
+
+### 7.3 Policy precedence
+
+**Deny-wins.**
+
+The view-generation algorithm:
+
+1. Collect every policy row matching `(table, column, principal ∈
+   actor's identity set)`, where the identity set is
+   `{user:<id>, role:..., service:..., *}` for the current actor.
+2. If *any* matching row has `access_level = 'deny'`, the actor
+   does not see the row/column. No further evaluation.
+3. Otherwise, the actor sees the row/column iff at least one
+   matching row has `access_level = 'read'` or `'write'` (per
+   the requested operation).
+4. Absent any matching row, the default is **deny**. (Tier 1's
+   "safe by default" stance.)
+
+`access_level = 'admin'` is a super-set of `'write'`. It exists
+for ergonomic UI badging but does not introduce a fourth tier in
+the evaluation order; admin → write → read in the matcher.
+
+### 7.4 Interaction with views
+
+Provenance and temporal views (`verisimdb_<table>_with_provenance`,
+`verisimdb_<table>_with_temporal`) currently bypass access
+policies. **They must not.**
+
+The codegen layer, when emitting these views, must compose the
+access-policy predicate into the view's `WHERE` clause. A user
+without read on `posts` must not see provenance for `posts` rows
+via the enriched view either.
+
+This is a hard requirement: leaking provenance about a row a user
+can't see is itself an information disclosure.
+
+The implementation will follow in V-L1-H2 (to be filed).
+
+### 7.5 Typed predicate language
+
+Replace `condition TEXT` with a typed AST. Initial scope:
+
+[source,rust]
+----
+pub enum AccessPredicate {
+    /// Always true (no row-level filter).
+    True,
+    /// Column equality: `<column> = <literal>`.
+    Eq { column: String, value: Literal },
+    /// Column membership: `<column> IN (<literals>...)`.
+    In { column: String, values: Vec<Literal> },
+    /// Conjunction.
+    And(Vec<AccessPredicate>),
+    /// Disjunction.
+    Or(Vec<AccessPredicate>),
+    /// Negation.
+    Not(Box<AccessPredicate>),
+}
+
+pub enum Literal {
+    Int(i64),
+    Float(f64),
+    Text(String),
+    Bool(bool),
+    Null,
+}
+----
+
+This covers the common cases (`tenant_id = 42`, `region IN
+('eu', 'uk')`, `status != 'archived'`). It deliberately excludes
+subqueries, function calls, and arithmetic — those open the
+injection surface back up.
+
+Serialisation is JSON in the `condition` column (renamed
+`condition_ast`), validated at insert time against a JSON Schema.
+Codegen emits the SQL by walking the AST; identifiers go through
+`crate::codegen::ident::validate_identifier` (V-L2-G1 from #39)
+and literals are bound as query parameters, never inlined.
+
+The full AST + JSON Schema + codegen lands in V-L1-H3 (to be
+filed). This ADR is binding for that work.
+
+## Consequences
+
+### Positive
+
+* Predicate language is auditable. A reviewer can read every
+  policy and know exactly what it does.
+* No SQL injection surface via `condition`. Identifiers are
+  validated; literals are bound parameters.
+* Deny-wins gives users a clear mental model. Most failures
+  ("why can't I see this?") are answered by "some deny matched".
+* Provenance/temporal views no longer leak.
+* `*` and prefix-typed principals make blanket policies easy to
+  express ("deny:role:contractor on column:salary").
+
+### Negative
+
+* Migration: existing `condition TEXT` rows have to be re-encoded
+  as `condition_ast` JSON. If there's anything in production now
+  (likely not), V-L1-H3 carries a migration tool.
+* "No subqueries" rules out conditions like "owner_id =
+  current_user". That's an authentication-context concern, not
+  ACL; the actor's identity set carries it instead.
+* Roles flat (no hierarchy) is a Phase-1 simplification.
+  Deployments that need it will press for an ADR-0008.
+
+### Neutral
+
+* The `verisimdb_access_policies` table already stores `principal`
+  as TEXT and `access_level` as TEXT. The V-L2-J1 enum CHECK
+  (#43) constrained `access_level` to
+  `{read, write, admin, deny}` — exactly the four values this ADR
+  uses. No DDL change from that side.
+* The `target_column TEXT` NULL → whole-row policy convention
+  stays.
+
+## Open questions
+
+* **OQ-1**: Role hierarchy / inheritance. Deferred to a separate
+  ADR.
+* **OQ-2**: Time-bounded policies (`valid_from`, `valid_to` on a
+  policy row). Useful for "grant access until end of audit".
+  Suggested follow-up.
+* **OQ-3**: Should the actor's identity set be carried in the
+  session via SET or in a per-query parameter? Backend-specific;
+  document the resolution in V-L1-H2.
+
+## Cross-references
+
+* ADR-0004 — concerns octad (AccessControl is the 6th concern).
+* V-L2-G1 (#39) — identifier validation (already merged). The
+  typed predicate AST reuses `validate_identifier` for column
+  names.
+* V-L2-J1 (#43) — `access_level` enum CHECK (already merged).
+  Same four values used here.
+* `src/abi/mod.rs::AccessPolicy` — top-level struct.
+* `src/codegen/overlay.rs::generate_access_policy_table` — DDL.
+* `tests/integration_test.rs` — once V-L1-H3 lands, tests must
+  cover deny-wins, prefix-typed principals, and view filtering.

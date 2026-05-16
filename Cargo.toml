@@ -3,12 +3,14 @@
 name = "verisimiser"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>"]
 description = "Augment any database with VeriSimDB octad capabilities — drift detection, provenance, temporal versioning, and modality overlays"
 license-file = "LICENSE"
 repository = "https://github.com/hyperpolymath/verisimiser"
 keywords = ["verisim", "database", "augmentation", "drift-detection", "provenance"]
 categories = ["command-line-utilities", "database"]
+build = "build.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -19,6 +21,11 @@ anyhow = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+
+[build-dependencies]
+chrono = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+proptest = "1"

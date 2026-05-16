@@ -78,7 +78,8 @@ fn test_full_pipeline_blog_schema() {
         enable_constraints: true,
         enable_simulation: false,
     };
-    let overlay_ddl = overlay::generate_sidecar_schema(&schema, &octad);
+    let overlay_ddl =
+        overlay::generate_sidecar_schema(&schema, &octad).expect("schema is valid");
 
     // Verify all expected sidecar tables are present.
     assert!(
@@ -270,15 +271,15 @@ fn test_provenance_chain_integrity_multi_step() {
     assert_ne!(update1.hash, update2.hash);
     assert_ne!(update2.hash, delete.hash);
 
-    // Tamper detection: every hash-covered field must break verification
-    // when mutated (V-L2-C1, V-L2-C3, V-L2-C4).
+    // Tamper detection: post-V-L2-C1 the hash covers actor, so a
+    // tamper to actor alone now breaks verification (closes #30 / V-L2-C4).
     let mut tampered = update1.clone();
     tampered.actor = "evil-mallory".to_string();
     assert!(
         !tampered.verify(),
-        "actor is part of the hash; tampering with it must break verify"
+        "Tampering with actor must break verification"
     );
-
+    // Modifying a hash-covered field is also detected.
     let mut tampered_op = update1.clone();
     tampered_op.operation = "delete".to_string();
     assert!(
@@ -486,7 +487,8 @@ path = ".verisim/test.db"
     assert_eq!(schema.tables[0].name, "articles");
 
     // Generate overlay.
-    let overlay_ddl = overlay::generate_sidecar_schema(&schema, &manifest.octad);
+    let overlay_ddl = overlay::generate_sidecar_schema(&schema, &manifest.octad)
+        .expect("schema is valid");
     assert!(overlay_ddl.contains("verisimdb_provenance_log"));
     assert!(overlay_ddl.contains("verisimdb_temporal_versions"));
     assert!(

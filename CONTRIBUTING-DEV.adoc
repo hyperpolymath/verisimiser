@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= Contributing — Developer Guide
+Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+This guide is for contributors making *code changes* to verisimiser. For
+repository-wide RSR conventions (commit signing, file layout, contractiles)
+see `.github/CONTRIBUTING.md`.
+
+Three common contribution shapes get a checklist each:
+
+* Adding a new database backend
+* Adding a new drift category
+* Adding a new Tier 2 overlay
+
+== Clone, build, test
+
+[source,bash]
+----
+git clone git@github.com:hyperpolymath/verisimiser.git
+cd verisimiser
+cargo build
+cargo test --lib --bins
+cargo clippy --all-targets -- -D warnings
+----
+
+The full `cargo test` runs integration tests under `tests/`. On Windows those
+hit a TOML path-escape issue and fail spuriously; CI is the source of truth.
+
+The `Justfile` lists shorthand recipes for the common loops (`just test`,
+`just quality`, etc.). New Justfile recipes are only added once their
+underlying command works — see `docs/decisions/0002-no-aspirational-justfile-recipes.adoc`.
+
+== Adding a database backend
+
+Adding a backend (say, MySQL) means making the entire codegen + interception
+pipeline aware of it. Checklist:
+
+[%interactive]
+* [ ] Add a variant to `enum DatabaseBackend` in `src/abi/mod.rs`.
+* [ ] Update `DatabaseBackend::from_str` to recognise the new name plus
+      common aliases.
+* [ ] Update `DatabaseBackend::as_str` (and any `Display` impl) for the
+      new variant.
+* [ ] Decide the *interception strategy* (binlog CDC, change streams,
+      WAL monitoring, application middleware …) and document it on the
+      enum variant doc comment.
+* [ ] Add the dialect to `src/codegen/query.rs::build_entity_id_expr`
+      so the no-PK fallback row identifier is correct (e.g. SQLite uses
+      `rowid`, Postgres uses `ctid`).
+* [ ] Add a dialect branch to any other backend-aware site in
+      `src/codegen/` — search for `DatabaseBackend::` usages.
+* [ ] If the backend needs a separate sidecar dialect, extend
+      `src/codegen/overlay.rs` to emit the right `CREATE TABLE` syntax.
+* [ ] Add a unit test in `src/codegen/query.rs::tests` covering the new
+      variant for at least one interceptor type.
+* [ ] Update `Cargo.toml` only if the backend needs a new connector
+      crate (e.g. `mysql_async`). Prefer interception via the database's
+      replication interface; pull in connector crates only as a fallback.
+* [ ] If the backend belongs in the published interception list, add it
+      to `README.adoc` under *Interception methods*. Otherwise leave it
+      in `ROADMAP.adoc`.
+
+== Adding a drift category
+
+The drift system is V-L1-E (see #48 for the eight-category ADR). Each
+category is an isolated detector with input type, distance function, and
+threshold.
+
+[%interactive]
+* [ ] Open an ADR in `docs/decisions/` documenting the category's input
+      type, distance function, and default threshold.
+* [ ] Add a variant to `DriftCategory` in `src/tier1/drift.rs`.
+* [ ] Implement a `measure(prior, current) -> f64` function returning a
+      distance in `[0.0, 1.0]`.
+* [ ] Wire the measurement into the `DriftReport` aggregator.
+* [ ] Add unit tests for: identical inputs → 0.0; maximally different
+      inputs → 1.0; threshold-edge cases.
+* [ ] Update `docs/architecture/THREAT-MODEL.adoc` if the category has
+      adversarial implications.
+
+== Adding a Tier 2 overlay
+
+Tier 2 overlays require additional storage alongside the target database
+(graph, vector, tensor, semantic, …). New overlays are not the same as
+new backends.
+
+[%interactive]
+* [ ] Add a boolean field to `Tier2Config` in `src/manifest/mod.rs` (and
+      its `Default` impl) for the manifest toggle.
+* [ ] Decide the sidecar storage technology (pure Rust, HNSW, ndarray, …)
+      and document it on the `Tier2Config` field doc comment.
+* [ ] Add overlay DDL emission in `src/codegen/overlay.rs` behind the new
+      flag.
+* [ ] Add an interceptor in `src/codegen/query.rs` that routes the right
+      queries to the overlay.
+* [ ] Add a round-trip test in `src/codegen/overlay.rs::tests` covering
+      the flag both on and off.
+* [ ] Update `README.adoc`'s *Octad: Eight Modalities* table to reflect
+      the new overlay's tier and storage.
+
+== Style notes
+
+* Treat `cargo clippy --all-targets -- -D warnings` as part of `cargo
+  build`. The crate has no blanket `#![allow(...)]` blocks
+  (`docs/decisions/0001` and 0002 keep the surface clean).
+* Public items used as the library API should be `pub`; binary-only
+  helpers stay private.
+* All commits are SSH-signed (see `.github/CONTRIBUTING.md`).
+* PRs target `main`. Auto-merge with `--squash` is the norm.

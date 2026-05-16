@@ -1,0 +1,119 @@
+= Architecture Decision Record: 0009-build-path
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 9. Canonical build paths: cargo for dev, Containerfile for ops
+
+Date: 2026-05-14
+
+## Status
+
+Accepted
+
+## Context
+
+The repo carries four parallel build-environment definitions:
+
+* `flake.nix` + `.guix-channel` / `guix.scm` — reproducible
+  builds via Nix and Guix.
+* `Containerfile` — OCI image build, used by ops.
+* `.devcontainer/` — VS Code Dev Container definition.
+* The implicit fifth path is **just cargo** — every Rust contributor
+  runs `cargo build` locally without invoking any of the above.
+
+Nothing is documented as canonical. Each path drifts at its own
+cadence; nothing keeps them in sync. New contributors don't know
+which one is the "right" way to build.
+
+## Decision
+
+Two paths are canonical, the rest are experimental:
+
+* **`cargo build` is canonical for development.** Direct Rust
+  toolchain. Fastest iteration loop. The MSRV is pinned
+  (`rust-version = "1.85"` per V-L3-K1) so a contributor with
+  `rustup` and the right toolchain is fully set up. The
+  Justfile wraps this.
+
+* **`Containerfile` is canonical for ops.** Produces a single
+  OCI image suitable for deployment, CI, and reproducible
+  release builds. The release workflow (V-L3-L1, #58 / PR #80)
+  builds binaries for four targets natively, but
+  `Containerfile` is the supported way to *run* verisimiser in
+  production.
+
+`flake.nix`, `guix.scm`, `.guix-channel`, and `.devcontainer/`
+are **experimental**:
+
+* They remain in the tree because they were contributed by
+  someone who needed them.
+* They are not maintained by the core team. CI does not exercise
+  them. If they drift, the next user fixes them.
+* The README's "Install" section names cargo + Containerfile;
+  the experimental paths are listed in a "Other build
+  environments" subsection with the same caveat.
+
+### Alternative considered
+
+Pick exactly one canonical path. Rejected because dev and ops
+have legitimately different cost/benefit:
+
+* For dev: cargo is universally faster than every container
+  alternative. Forcing developers through a Containerfile
+  build every time wastes hours per week.
+* For ops: a pinned OCI image with reproducible layers is more
+  valuable than instructing operators to install rustup.
+
+### Alternative considered (also rejected)
+
+Delete the experimental paths. Rejected because there's no harm
+in keeping them around — they take no CI time (CI doesn't invoke
+them), and someone has put work into them. Marking them
+experimental is the polite middle.
+
+## Consequences
+
+### Positive
+
+* README's "Install" section now has a single primary answer:
+  use cargo for dev, the Containerfile for ops.
+* Contributors don't lose hours picking between four equally
+  unmaintained paths.
+* The CI matrix (`rust-ci.yml` with `1.85` + `stable`) tests
+  the canonical dev path. The release workflow tests the
+  canonical ops path. No CI cycles spent on experimental
+  paths.
+* Drift in `flake.nix` etc. is no longer a blocker — the
+  experimental tag says "this might be broken; PR welcome".
+
+### Negative
+
+* Nix and Guix users get a worse experience. They were
+  presumably attracted by the presence of those files. If they
+  want to keep those paths first-class, they'll need to
+  volunteer maintenance.
+* `.devcontainer/` users (VS Code remote-container workflows)
+  are also demoted.
+
+### Neutral
+
+* No file is removed. The experimental files stay in the tree
+  and can be re-promoted in a future ADR if a maintainer
+  emerges.
+* The Justfile already wraps cargo, so the dev experience is
+  unchanged for anyone using `just`.
+
+## Follow-ups (separate work)
+
+* README "Install" section rewrite — small follow-up PR, not
+  part of this ADR.
+
+## Cross-references
+
+* ADR-0001 — RSR template adoption.
+* V-L3-K1 (#57) / Cargo.toml `rust-version = "1.85"` — pins the
+  cargo dev path.
+* V-L3-L1 (#58) — release workflow that builds native binaries
+  for four targets.
+* `Containerfile`, `flake.nix`, `guix.scm`, `.devcontainer/` —
+  the files this ADR classifies.

@@ -1,202 +1,232 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
-= Provenance threat model
+= Provenance Threat Model
+Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 :toc: left
 :toclevels: 3
 :icons: font
+:source-highlighter: rouge
 
-This document fixes what the Provenance concern's hash chain proves and
-what it doesn't. It binds the design choices made in V-L2-C1, V-L2-C2,
-V-L2-L1, V-L2-L2, and the ADR-0004 follow-up.
+This document specifies what verisimiser's provenance hash chain
+actually proves, in what threat model, with what assumptions. It is
+the binding reference for the Step 2 implementation issues
+(V-L2-C1 … V-L2-L2) and is cited from each of them.
 
-Resolves: https://github.com/hyperpolymath/verisimiser/issues/25[V-L1-B1].
+The chain is a SHA-256 hash chain over `ProvenanceEntry` rows
+(`src/abi/mod.rs`). It is *not* a blockchain — there is no consensus,
+no proof-of-work, no distributed timestamp authority — but it does
+provide *append-only, tamper-evident* semantics under the conditions
+documented below.
 
-== Scope
+== 1. Adversary models
 
-In scope:: the `Provenance` octad concern as implemented by
-`ProvenanceEntry` in `src/abi/mod.rs` plus the sidecar table
-`verisimdb_provenance_log` plus (post V-L2-L1) the `chain_head` table.
+Each subsequent section is parameterised by which adversary we are
+defending against. The four models are mutually distinct in
+capability; in practice a real attacker may sit between two of them.
 
-Out of scope:: denial-of-service against the sidecar; side-channels
-(timing, cache); tampering of the target database itself
-(verisimiser only sees what its interceptors intercept); retroactive
-provenance for pre-existing rows (the genesis entry for an entity
-attests its existence at the moment verisimiser started observing it,
-not before); cryptographic compromise of SHA-256.
-
-== Adversaries
-
-Four adversaries cover the relevant capability axes. Each is a
-*lattice point*; real attackers combine capabilities.
-
-[cols="1,3"]
+[cols="1,3,2"]
 |===
-| Tag | Capability
+| Name | Capability | Typical real-world correspondent
 
-| **R**  | Read-only — can read both the target database and the
-sidecar. No write to either. Models: a forensic auditor;
-a leaked replica; a debugging copy on a laptop.
+| **Read-only**
+| Can read both target database and sidecar (provenance log,
+  temporal versions, lineage). Cannot write either.
+| Compromised read replica; off-host backup reader; auditor with
+  least-privilege account; lawful disclosure recipient.
 
-| **SW** | Sidecar-Write — can append new rows to
-`verisimdb_provenance_log` and `verisimdb_temporal_versions` but
-**cannot delete or rewrite existing rows**. Models: a sidecar
-configured append-only (filesystem-level WORM, S3 Object Lock,
-SQLite + revoked-DELETE/UPDATE permissions); also models a buggy
-verisimiser daemon that double-writes.
+| **Sidecar-append**
+| Can append new rows to `verisimdb_provenance_log` but cannot
+  delete or rewrite existing rows. (Realistic in append-only
+  configurations: filesystem-level WORM, immutable cron-driven
+  ingest, or a `BEFORE UPDATE/DELETE` trigger that refuses.)
+| Misbehaving instrumentation library; faulty sidecar-writer cron;
+  malicious extension to the application that can call the writer
+  API but cannot bypass the WORM layer.
 
-| **SR** | Sidecar-Rewrite — can rewrite or delete arbitrary rows
-in the sidecar. Models: root on the sidecar host; compromised
-application credential with full sidecar privileges; a backup
-operator restoring an older sidecar snapshot.
+| **Sidecar-rewrite**
+| Can rewrite arbitrary rows in the provenance log, in any order,
+  with any contents. The integrity store (sidecar) is fully under
+  the adversary's control.
+| Root on the sidecar host; compromised application running with
+  sidecar write privilege; disk swap / device theft.
 
-| **CK** | Clock-skew — can write entries (via SW or SR) with
-timestamps that lie. Models: a system clock that drifts; an
-adversary who controls the clock source; coordinated backdating.
-|===
-
-== Per-adversary protection matrix
-
-For each adversary, what the chain proves about each field:
-**P** = protected (tampering detected),
-**N** = not protected,
-**C** = conditionally protected (see note).
-
-[cols="2,1,1,1,1"]
-|===
-| Field | R | SW | SR | SR+CK
-
-| Genesis existence / order        | P | P | N    | N
-| `previous_hash` of any entry     | P | P | C-1  | C-1
-| `entity_id` of any entry         | P | P | C-1  | C-1
-| `operation` of any entry         | P | P | C-1  | C-1
-| `actor` of any entry             | P | P | C-1  | C-1
-| `timestamp` of any entry         | P | P | C-1  | N (CK falsifies)
-| `before_snapshot` of any entry   | P | P | C-1  | C-1
-| `transformation` of any entry    | P | P | C-1  | C-1
-| Absence of an entry              | C-2 | C-2 | N    | N
-| Total ordering across entities   | N | N | N    | N
+| **Clock-skew**
+| Orthogonal to the above. Can submit writes (via the legitimate
+  writer path) with timestamps drawn from a clock that does not
+  agree with monotonic UTC. May be combined with any of the three
+  above.
+| Untrusted NTP source; container with overridden clock; mobile
+  client; multi-region writer with clock drift.
 |===
 
-**C-1** — under SR (or SR+CK), the adversary can rewrite an
-arbitrary suffix of the chain (recomputing hashes as they go). What's
-preserved against SR is **only the prefix up to the most-recent
-externally attested hash** (e.g. a hash periodically signed by an
-out-of-band notary, anchored to an append-only log, or published to
-a transparency service). Without an external anchor, the chain
-proves *nothing* against SR.
+== 2. What the chain proves
 
-**C-2** — absence is provable only if every legitimate append goes
-through verisimiser. Direct writes to the target database that
-bypass interception are invisible to the chain; the chain cannot
-attest to what it never saw.
+In all cases below, the chain's claims are conditional on the
+assumptions in section 4. "Protected" means tampering produces a
+hash that fails `ProvenanceEntry::verify()` (per V-L2-C1, the
+preimage is domain-separated and length-prefixed over all seven
+data fields).
 
-== Field coverage requirement
+=== 2.1 Read-only adversary
 
-A direct consequence of C-1 / C-2 and the per-adversary matrix:
+Trivially: the adversary makes no writes, so nothing they observe
+can cause the chain to fail to verify. The chain is intact by
+construction; the adversary can read it.
 
-[NOTE]
-====
-Every field that an auditor will rely on for forensic purposes
-**must** participate in the hash. `actor`, `before_snapshot`, and
-`transformation` are all such fields — they are the audit. If they
-are not in the preimage, the chain protects them against R and SW
-only by *coincidence* (because the row itself was hash-keyed in the
-DB), not by design.
+* **Detectable**: nothing (they did nothing detectable).
+* **Defeated**: by `BEGIN TRANSACTION ... COMMIT` reads against
+  the sidecar; no replay attack is even meaningful here.
 
-This document therefore *requires* V-L2-C1: the preimage must cover
-`previous_hash`, `entity_id`, `operation`, `actor`, `timestamp`,
-`before_snapshot`, `transformation`. Any future field added to
-`ProvenanceEntry` must either be added to the preimage or
-explicitly recorded here with a justification for its omission.
-====
+This model exists primarily to constrain *what we publish*: the
+sidecar is readable, so any field stored in it is exposed.
+`before_snapshot` may contain redacted data; access-control policy
+(`verisimdb_access_policies`) is the boundary against unauthorised
+read.
 
-== Canonical encoding requirement
+=== 2.2 Sidecar-append adversary
 
-A direct consequence of "the hash protects the field" being a
-*function*, not a relation:
+The adversary can write new rows. They cannot delete or rewrite
+existing rows, so the existing chain is intact.
 
-[NOTE]
-====
-Two distinct preimages must produce distinct hashes (collision
-resistance is SHA-256's job). Two *equal* preimages must produce
-equal hashes (canonicalisation is our job). The encoding must:
+* **Protected**: every historical entry. Existing
+  `previous_hash` pointers cannot be altered, so the chain spine
+  from genesis to the most recent legitimate entry is verifiable.
+* **Not protected**: the adversary can append entirely new entries
+  with whatever `actor`, `operation`, `before_snapshot`,
+  `transformation` they choose, *including chained to the existing
+  tip*. Their writes will have the right `previous_hash` and will
+  `verify()` true individually.
+* **Defeated**: by out-of-band actor authentication. The chain
+  records *what was claimed*; the adversary can claim
+  `actor="alice"`. Pairing the chain with a signature on each
+  entry (e.g. SSH commit signing equivalent over `entry.hash`) is
+  the standard fix. **Not currently implemented.** See open
+  question OQ-1.
 
-. Domain-separate verisimiser provenance hashes from any other
-hash the system computes (`b"verisim-prov-v1\0"`).
-. Length-prefix variable-length fields so concatenation is
-unambiguous.
-. Use a canonical timestamp encoding (V-L2-C2:
-  `i64_le(secs) || u32_le(nanos)`), not a string representation that
-  admits multiple valid forms for the same instant.
-====
+=== 2.3 Sidecar-rewrite adversary
 
-== Append serialisation requirement
+The adversary can rewrite arbitrary rows.
 
-A direct consequence of "previous_hash chains entries linearly":
+* **Protected**: nothing locally. Every row can be replaced; the
+  hash chain can be entirely reconstructed from genesis with new
+  content and will verify just as well. The chain provides zero
+  protection against an adversary with write access to the
+  sidecar.
+* **Defeated**: only by an *external* anchor. The standard
+  anchors are (a) periodic publication of the chain's tip hash
+  to a remote append-only log (e.g. transparency log,
+  certificate transparency, signed-timestamp service); or
+  (b) per-entry signatures backed by a key whose authority is
+  not under the adversary's control. **Neither is currently
+  implemented.** See OQ-2.
 
-[NOTE]
-====
-Two writers cannot independently chain from the same `previous_hash`
-without forking the chain. Verisimiser must serialise appends
-per-entity. V-L2-L1 specifies the write-path lock; V-L2-L2 specifies
-the database UNIQUE constraint that makes forks structurally
-impossible even if the lock is bypassed.
+=== 2.4 Clock-skew adversary
 
-The chain is *per-entity-serial* but *cross-entity-parallel*.
-A global serial order across entities is *not* a requirement
-(see "Total ordering" in the matrix above).
-====
+The adversary submits writes through the legitimate path but with
+manipulated timestamps.
 
-== Anchor / notary (future)
+* **Protected**: ordering is determined by the `previous_hash`
+  chain spine, not by `timestamp`. A backdated or future-dated
+  entry will still chain correctly *to whatever predecessor it
+  claims*; reordering is therefore prevented even under clock
+  skew, *given* the predecessor was honestly chosen.
+* **Not protected**: the absolute time recorded in `timestamp`.
+  V-L2-C2 hashes the timestamp canonically so the recorded value
+  is tamper-evident, but the recorded value can still be a lie
+  the writer chose at write time.
+* **Defeated**: trust a single monotonic clock source (NTP from a
+  trusted root, hardware clock with attestation) and refuse
+  writes whose timestamp is more than ±N seconds from the
+  receiving host's clock. **Not currently implemented.** See OQ-3.
 
-Protection against SR requires an *external anchor* that the
-adversary cannot rewrite. Options, none of which this document
-mandates yet:
+== 3. Out of scope
 
-. **Periodic notarisation** — every N minutes, sign the latest
-chain_head with a key not held on the sidecar host, and publish
-the signature to an out-of-band log.
-. **Transparency log** — submit each `chain_head` update to an
-external append-only log (Sigstore-style).
-. **Replication to immutable storage** — write each new entry to
-S3 Object Lock (or equivalent) as a defence in depth.
+These threats are *not* defended by the provenance chain and any
+claim to the contrary is incorrect:
 
-The threat model leaves the choice for ADR-0005 once a deployment
-context exists.
+* **Denial of service.** An adversary who fills the sidecar
+  disk, or who deletes the entire sidecar file, defeats the
+  chain. The chain produces no signal in that case.
+* **Side channels.** Timing, memory, network metadata, query
+  cardinality. The chain records what was written; it does not
+  obscure access patterns.
+* **Target-DB tampering not routed through the writer.**
+  VeriSimiser intercepts modifications through the configured
+  interception path (`pg_notify`, `sqlite3_update_hook`,
+  change streams, application middleware — see README).
+  Modifications that bypass interception — direct file-system
+  writes to the target's storage, restore from backup, schema
+  migration outside the controlled path — are invisible to
+  the chain.
+* **Retroactive provenance.** Data that existed before
+  verisimiser was attached has no provenance row. The chain
+  starts at the genesis entry; rows that predate the genesis
+  cannot be vouched for.
+* **Identity binding.** The chain records `actor` as a string;
+  it does not authenticate that the string corresponds to the
+  real-world entity it names. See sidecar-append, above.
+* **Confidentiality.** Every field in the entry is stored in
+  plaintext in the sidecar.
 
-== Out-of-band assumptions
+== 4. Assumptions
 
-. The sidecar host's clock is monotonic and within bounded skew of
-real time. Without this, all timestamps are advisory (see CK in the
-matrix).
-. Verisimiser's process integrity is assumed — a verisimiser binary
-that has been swapped for a malicious one can produce a hash-chain
-that verifies against itself but attests to nothing real. Binary
-provenance is a separate concern (out of scope here).
-. SHA-256 is collision-resistant in the cryptographic sense for the
-lifetime of the audit window.
+* **Sidecar locality.** The sidecar runs on the same host as
+  the target database. Cross-host or remote sidecar deployments
+  introduce a network-write surface that the threat model does
+  not cover.
+* **Append-only storage (optional).** Sidecar-append's
+  protection assumes the sidecar storage refuses
+  `UPDATE`/`DELETE` on `verisimdb_provenance_log` at a layer
+  the application cannot bypass. Without this, sidecar-append
+  collapses into sidecar-rewrite.
+* **Hash algorithm.** SHA-256 is preimage-resistant and
+  collision-resistant for the foreseeable future. A migration
+  to a different algorithm requires bumping the domain tag
+  (currently `b"verisim-prov-v1\0"`); see V-L2-C1.
+* **Clock source.** `chrono::Utc::now()` reads the system
+  monotonic clock. The clock-skew adversary section assumes
+  no defence against a lying clock; "trusted clock" is an
+  out-of-band assumption a deployment may add.
+* **Single writer.** No multi-writer reconciliation. If two
+  concurrent writers both chain to the current tip, only the
+  first commit survives; the second errors at insert time
+  (FK / chain-position contention).
 
-== Open questions
+== 5. Open questions
 
-. Should `Option<String>` fields (`before_snapshot`, `transformation`)
-encode `None` vs `Some("")` distinctly? The current proposal collapses
-them (both encode as `u64_le(0)` length). Document explicitly that
-the chain treats "no snapshot" and "empty snapshot" identically; if a
-future use case requires distinguishing them, a single sentinel byte
-(`0x00` for None, `0x01` for Some) prefixed inside the length-prefixed
-slot resolves it.
-. Should the chain include an explicit `chain_id` covering all of an
-entity's entries (in addition to chaining via `previous_hash`)? Cheap
-defence in depth against entity_id confusion; defer to ADR-0004.
+Each is a deliberate non-decision; an ADR resolves the choice.
+
+* **OQ-1: Per-entry signatures?** Do we want a detached
+  signature column (e.g. `signature TEXT`) over `entry.hash`
+  using a per-actor key, defending sidecar-append against
+  forged `actor`? Trade-off: PKI overhead vs. forensic
+  integrity. Suggested follow-up: ADR-0004.
+* **OQ-2: External anchoring?** Periodic publication of the
+  chain tip to a remote append-only log (TUF, Sigsum,
+  certificate transparency). Trade-off: anchor latency and
+  external dependency vs. defence against sidecar-rewrite.
+  Suggested follow-up: ADR-0005.
+* **OQ-3: Trusted clock policy?** Refuse writes whose
+  timestamp drifts more than ±N seconds from the local
+  monotonic clock. Trade-off: replicated / mobile writers
+  break vs. clock-skew defence. Suggested follow-up:
+  ADR-0006.
+* **OQ-4: Snapshot redaction.** `before_snapshot` may carry
+  PII. Should the writer hash a *digest* of the snapshot
+  rather than the snapshot itself, with the plaintext kept
+  in a separately access-controlled store? Trade-off: storage
+  vs. lawful-disclosure granularity. Suggested follow-up:
+  ADR-0007.
 
 == Cross-references
 
-* V-L2-C1 — implements the field coverage + domain separation
-* V-L2-C2 — implements canonical timestamp encoding
-* V-L2-C3 — positive tamper-detection tests
-* V-L2-C4 — removes the wontfix test that codified the C-1 gap
-* V-L2-L1 — per-entity write-path serialisation
-* V-L2-L2 — UNIQUE INDEX(entity_id, previous_hash) defence in depth
-* V-L2-N1 — deduplicates the type used here (ProvenanceEntry vs
-  ProvenanceRecord)
-* ADR-0004 (future) — records the binding choices made here
+This document is cited by V-L2-C1 through V-L2-C4 (which
+implement the field-coverage and canonical-timestamp choices),
+V-L2-L1 / V-L2-L2 (which constrain chain forks at the storage
+layer), and V-L1-C1 / V-L1-C2 (which build the actual write
+pipeline that produces the entries this model talks about).
+
+The implementation lives in `src/abi/mod.rs::ProvenanceEntry`;
+the storage schema in `src/codegen/overlay.rs::generate_provenance_table`;
+and the integration tests in
+`tests/integration_test.rs::test_provenance_chain_integrity_multi_step`.

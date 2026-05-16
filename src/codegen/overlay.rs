@@ -80,8 +80,24 @@ fn must_validate_identifier(name: &str) -> &str {
 ///   dimension tables to generate.
 ///
 /// # Returns
-/// A string containing the complete DDL for the sidecar database.
-pub fn generate_sidecar_schema(schema: &ParsedSchema, octad: &OctadConfig) -> String {
+/// `Ok(String)` with the complete DDL on success. `Err` if any table or
+/// column name in `schema` is not a valid SQL identifier per
+/// [`crate::codegen::ident::validate_identifier`] — guards against SQL
+/// injection via parsed schema input. Closes #39.
+pub fn generate_sidecar_schema(
+    schema: &ParsedSchema,
+    octad: &OctadConfig,
+) -> anyhow::Result<String> {
+    use crate::codegen::ident::validate_identifier;
+
+    // Fail fast on any unsafe identifier flowing into generated DDL.
+    for table in &schema.tables {
+        validate_identifier(&table.name, "table name")?;
+        for column in &table.columns {
+            validate_identifier(&column.name, "column name")?;
+        }
+    }
+
     let mut ddl = String::new();
 
     ddl.push_str("-- SPDX-License-Identifier: PMPL-1.0-or-later\n");
@@ -111,7 +127,7 @@ pub fn generate_sidecar_schema(schema: &ParsedSchema, octad: &OctadConfig) -> St
         ddl.push_str(&generate_simulation_table());
     }
 
-    ddl
+    Ok(ddl)
 }
 
 /// Generate the metadata table that tracks which target tables are augmented.
@@ -184,7 +200,8 @@ fn generate_provenance_table() -> String {
      \x20   actor         TEXT NOT NULL,\n\
      \x20   timestamp     TEXT NOT NULL,  -- ISO 8601\n\
      \x20   before_snapshot TEXT,          -- JSON of entity state before operation\n\
-     \x20   transformation  TEXT           -- description of transformation applied\n\
+     \x20   transformation  TEXT,          -- description of transformation applied\n\
+     \x20   CHECK (operation IN ('insert','update','delete','transform'))\n\
      );\n\
      -- V-L2-L2: forbid chain forks at the DB level. Genesis records all\n\
      -- carry previous_hash='' so this also enforces a single genesis per\n\
@@ -363,7 +380,7 @@ mod tests {
             enable_constraints: true,
             enable_simulation: true,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
 
         assert!(ddl.contains("verisimdb_metadata"));
         assert!(ddl.contains("verisimdb_provenance_log"));
@@ -371,6 +388,100 @@ mod tests {
         assert!(ddl.contains("verisimdb_temporal_versions"));
         assert!(ddl.contains("verisimdb_access_policies"));
         assert!(ddl.contains("verisimdb_simulation_branches"));
+    }
+
+    /// All four enum-shape columns must be CHECK-constrained, and
+    /// simulation_branches.parent_branch must be a self-referencing FK
+    /// (closes #43).
+    #[test]
+    fn test_overlay_has_enum_checks_and_fk() {
+        let schema = test_schema();
+        let octad = OctadConfig {
+            enable_provenance: true,
+            enable_lineage: true,
+            enable_temporal: true,
+            enable_access_control: true,
+            enable_constraints: true,
+            enable_simulation: true,
+        };
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+
+        // Self-referencing FK on parent_branch.
+        assert!(
+            ddl.contains("parent_branch TEXT REFERENCES verisimdb_simulation_branches(branch_id)"),
+            "simulation_branches.parent_branch is missing the self-referencing FK"
+        );
+        // Enum CHECKs.
+        assert!(
+            ddl.contains("CHECK (status IN ('active','merged','abandoned'))"),
+            "simulation_branches.status enum CHECK missing"
+        );
+        assert!(
+            ddl.contains("CHECK (operation IN ('insert','update','delete','transform'))"),
+            "provenance_log.operation enum CHECK missing"
+        );
+        assert!(
+            ddl.contains("CHECK (access_level IN ('read','write','admin','deny'))"),
+            "access_policies.access_level enum CHECK missing"
+        );
+        assert!(
+            ddl.contains(
+                "CHECK (derivation_type IN ('copy','transform','aggregate','join','filter'))"
+            ),
+            "lineage_graph.derivation_type enum CHECK missing"
+        );
+    }
+
+    /// The "current version" partial index must be UNIQUE and the
+    /// `valid_to >= valid_from` CHECK must be present (closes #41).
+    /// Two concurrent writers must not be able to leave two rows with
+    /// `valid_to IS NULL` for the same `(entity_id, table_name)`.
+    #[test]
+    fn test_temporal_table_has_unique_partial_index_and_valid_to_check() {
+        let schema = test_schema();
+        let octad = OctadConfig {
+            enable_provenance: false,
+            enable_lineage: false,
+            enable_temporal: true,
+            enable_access_control: false,
+            enable_constraints: false,
+            enable_simulation: false,
+        };
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+        assert!(ddl.contains("verisimdb_temporal_versions"));
+        assert!(
+            ddl.contains(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_temporal_current ON verisimdb_temporal_versions(entity_id, table_name) WHERE valid_to IS NULL"
+            ),
+            "temporal current-version index must be UNIQUE"
+        );
+        assert!(
+            ddl.contains("CHECK (valid_to IS NULL OR valid_to >= valid_from)"),
+            "temporal valid_to ordering CHECK missing"
+        );
+    }
+
+    /// Lineage edges must refuse self-loops at the storage layer
+    /// (closes #42). The DAG claim in the README would be unenforced
+    /// without this check.
+    #[test]
+    fn test_lineage_table_has_self_reference_check() {
+        let schema = test_schema();
+        let octad = OctadConfig {
+            enable_provenance: false,
+            enable_lineage: true,
+            enable_temporal: false,
+            enable_access_control: false,
+            enable_constraints: false,
+            enable_simulation: false,
+        };
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+        assert!(ddl.contains("verisimdb_lineage_graph"));
+        // The exact CHECK clause must be present in the emitted DDL.
+        assert!(
+            ddl.contains("CHECK (source_entity <> target_entity OR source_table <> target_table)"),
+            "lineage table is missing the self-reference CHECK constraint"
+        );
     }
 
     #[test]
@@ -384,7 +495,7 @@ mod tests {
             enable_constraints: false,
             enable_simulation: false,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
 
         // Metadata is always generated.
         assert!(ddl.contains("verisimdb_metadata"));
@@ -400,7 +511,7 @@ mod tests {
     fn test_metadata_seeds_table_info() {
         let schema = test_schema();
         let octad = OctadConfig::default();
-        let ddl = generate_sidecar_schema(&schema, &octad);
+        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
 
         assert!(ddl.contains("INSERT OR IGNORE INTO verisimdb_metadata"));
         assert!(ddl.contains("'posts'"));

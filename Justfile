@@ -58,7 +58,7 @@ assail:
 # `start`, `drift`, `provenance`, `history`, `status`, `octad`).
 # Re-add wrappers here when their underlying subcommands ship.
 
-# Run contractile checks
+# Run contractile checks (informational only — not required by CI per ADR-0008)
 contractile-check:
     @echo "Running contractile validation..."
     @test -f .machine_readable/contractiles/must/Mustfile.a2ml && echo "Mustfile: OK" || echo "Mustfile: MISSING"

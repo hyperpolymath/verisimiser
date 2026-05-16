@@ -1,0 +1,126 @@
+= Architecture Decision Record: 0004-octad-ontology
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 4. Canonical octad: concerns, not modalities
+
+Date: 2026-05-14
+
+## Status
+
+Accepted
+
+## Context
+
+Two different "octads" lived in the repo under the same name.
+
+**Modalities octad** (`README.adoc` §"VeriSimDB's Octad: Eight
+Modalities"): Graph · Vector · Tensor · Semantic · Document ·
+Temporal · Provenance · Spatial. These are *representations* —
+shapes that the same entity is materialised in.
+
+**Concerns octad** (`src/abi/mod.rs::OctadDimension`,
+`src/manifest/mod.rs::OctadConfig`, `src/main.rs::print_octad`):
+Data · Metadata · Provenance · Lineage · Constraints ·
+AccessControl · Temporal · Simulation. These are *aspects* —
+properties of the entity you want to know or enforce.
+
+Both ontologies have a Temporal and a Provenance entry but with
+different meanings; a reader could not tell which was meant
+without context. Tier 2 module names (`graph`, `vector`,
+`tensor`, …) reach for the modalities octad; the CLI's
+`octad` subcommand, the manifest's `[octad]` section, and
+ADR-0003's eight drift categories reach for the concerns octad.
+The two ontologies were interleaved but never reconciled.
+
+## Decision
+
+**The concerns octad is canonical.** Data · Metadata ·
+Provenance · Lineage · Constraints · AccessControl · Temporal ·
+Simulation is what verisimiser's top-level identity is. Every
+manifest field, CLI subcommand, public type, and ADR-0003 drift
+category refers to *this* octad.
+
+The modalities octad is demoted to **Tier 2 overlays**: graph,
+vector, tensor, semantic, document, spatial are storage shapes
+the user *can additionally project an entity into*, gated by
+`Tier2Config`. They are not the top-level model.
+
+### Alternative considered
+
+Promote the modalities octad and rewrite `abi::OctadDimension`,
+the manifest fields, `print_octad`, and integration tests to
+enumerate Graph · Vector · Tensor · Semantic · Document ·
+Temporal · Provenance · Spatial. Filed as the hypothetical
+V-L1-A3.
+
+This was rejected because:
+
+1. The codebase has already committed to the concerns octad
+   across `abi::`, `manifest::`, `codegen::`, `tier1::`,
+   CLI, manifest schema, and ADR-0003. Reversing would touch
+   every module.
+2. The concerns framing scales: each octad entry is a question
+   ("when did this change?", "who saw this?", "what derived
+   from this?"). The modalities framing answers the same
+   questions only obliquely.
+3. The drift categories defined in ADR-0003 are themselves
+   concerns-shaped — Structural, Semantic, Statistical,
+   Referential drift are violations of the *Constraints*
+   concern across modalities. Inverting the relationship makes
+   the drift catalogue harder to motivate, not easier.
+
+The honest case for modalities-as-top-level: it matches the
+upstream VeriSimDB framing (per the README link), and "your
+table is also a graph index" sells more easily to a database
+engineer than "your table also has a Lineage concern." That
+argument loses to the implementation reality above.
+
+## Consequences
+
+### Positive
+
+* One octad in the public-API surface, no ambiguity. Any future
+  field added to manifest/CLI/codegen knows where it belongs.
+* `[octad]` manifest section, `verisimiser octad` subcommand,
+  `OctadDimension` enum, `OctadConfig` struct, ADR-0003 drift
+  categories, V-L1-B1 threat-model citations, and `[retention]`
+  per-dimension config (V-L2-P1) all refer to the same thing.
+* `Tier2Config` (with `graph/vector/tensor/semantic/document/
+  spatial` flags) is now unambiguously about *overlays*, not
+  about top-level identity.
+
+### Negative
+
+* The README's prominent "VeriSimDB's Octad: Eight Modalities"
+  section is misleading and must be rewritten under V-L1-A2
+  (issue #20). The section currently presupposes the rejected
+  ontology, which is the second-worst place a reader can land.
+* Anyone who learned verisimiser via the modalities framing has
+  to relearn it. Cross-reference text in the rewritten README
+  needs to explain why modalities are demoted to Tier 2.
+
+### Neutral
+
+* `Tier2Config` exists already and is internally consistent;
+  this ADR just relabels the conceptual frame, not the code.
+* The modalities octad isn't deleted from the world — it stays
+  alive as Tier 2 overlays, just with a clearer scope.
+
+## Follow-ups
+
+* **V-L1-A2 (issue #20)** unblocked: rewrite the README around
+  the concerns octad; recast the eight drift categories as
+  symptoms-of-Constraints-violation across modalities.
+* **V-L1-A3** (hypothetical, never filed because modalities lost)
+  is closed by construction.
+* `src/main.rs::dimension_description` already aligns with this
+  ADR; no code change is required as part of this ADR.
+
+## Cross-references
+
+* ADR-0001 — adopts RSR template (predates this decision).
+* ADR-0003 — drift categories (built on the concerns octad).
+* V-L1-B1 — provenance threat model (cites concerns octad).
+* `src/abi/mod.rs::OctadDimension` — canonical enum.
+* `src/manifest/mod.rs::OctadConfig` — manifest mapping.

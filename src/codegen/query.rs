@@ -111,33 +111,53 @@ fn generate_table_interceptor(
     }
 }
 
-/// Build a SQL expression that computes a composite entity_id from PK columns.
+/// Build a SQL expression that uniquely identifies each row in a table.
 ///
-/// For single-column PKs: just CAST the column to TEXT.
-/// For composite PKs: concatenate with '::' separator.
-/// If no PK is defined, use ROWID (SQLite) or ctid (PostgreSQL).
+/// Encoding (collision-resistant by construction):
+///
+/// - **Single-column PK**: `CAST(col AS TEXT)`.
+/// - **Composite PK**: length-prefix encoding —
+///   `length(val)::text || ':' || val` per column, concatenated with no
+///   inter-column separator. The explicit lengths make column boundaries
+///   unambiguous, so a PK value containing `::` (or any other character)
+///   cannot collide with a different PK across rows.
+/// - **NULL** in any composite column encodes as the literal `'N'`, so
+///   NULL is distinguishable from the empty string (which encodes as
+///   `'0:'`) and from a literal `'N…'` value (which carries a length
+///   prefix). This also fixes the previous bug where Postgres `||`
+///   returned NULL for the whole expression on any NULL operand.
+/// - **No PK**: ROWID (SQLite) / ctid (PostgreSQL) / `_id` (MongoDB).
+///
+/// Closes #44.
 fn build_entity_id_expr(pk_columns: &[&str], table_name: &str, backend: DatabaseBackend) -> String {
     if pk_columns.is_empty() {
-        // No PK defined — fall back to internal row identifier.
-        match backend {
+        return match backend {
             DatabaseBackend::SQLite => format!("{}.rowid", table_name),
             DatabaseBackend::PostgreSQL => format!("{}.ctid::text", table_name),
             DatabaseBackend::MongoDB => "CAST(_id AS TEXT)".to_string(),
-        }
-    } else if pk_columns.len() == 1 {
-        format!("CAST({}.{} AS TEXT)", table_name, pk_columns[0])
-    } else {
-        // Composite PK: concatenate columns with '::' separator.
-        let parts: Vec<String> = pk_columns
-            .iter()
-            .map(|col| format!("CAST({}.{} AS TEXT)", table_name, col))
-            .collect();
-        match backend {
-            DatabaseBackend::PostgreSQL => parts.join(" || '::' || "),
-            DatabaseBackend::SQLite => parts.join(" || '::' || "),
-            DatabaseBackend::MongoDB => parts.join(" + '::' + "),
-        }
+        };
     }
+    if pk_columns.len() == 1 {
+        return format!("CAST({}.{} AS TEXT)", table_name, pk_columns[0]);
+    }
+
+    // Composite PK: length-prefix encoding, NULL-safe.
+    let concat = match backend {
+        DatabaseBackend::PostgreSQL | DatabaseBackend::SQLite => " || ",
+        DatabaseBackend::MongoDB => " + ",
+    };
+    let parts: Vec<String> = pk_columns
+        .iter()
+        .map(|col| {
+            format!(
+                "COALESCE(CAST(LENGTH(CAST({tn}.{col} AS TEXT)) AS TEXT){c}':'{c}CAST({tn}.{col} AS TEXT), 'N')",
+                tn = table_name,
+                col = col,
+                c = concat,
+            )
+        })
+        .collect();
+    parts.join(concat)
 }
 
 /// Generate a SQL view that enriches a table's rows with their latest
@@ -160,12 +180,13 @@ fn generate_provenance_view(
         table_name
     );
 
-    // V-L2-K1: the previous greatest-N-per-group subquery used a broken
-    // correlation (the inner `MAX(p2.timestamp)` subquery referenced the
-    // *outer* uncorrelated `verisimdb_provenance_log` row instead of the
-    // grouping aliased as `prov`). Replaced with the canonical
-    // ROW_NUMBER() partition-by-entity pattern, which works on SQLite
-    // 3.25+ and PostgreSQL.
+    // Select the latest provenance row per entity via ROW_NUMBER() over a
+    // PARTITION-by-entity / ORDER-by-timestamp-DESC window. The previous
+    // correlated MAX(timestamp) subquery referenced the outer
+    // `verisimdb_provenance_log` table by base-name, which is ambiguous
+    // when the same table appears in nested scopes and produced wrong
+    // (or no) "latest" rows depending on planner choices. Closes #40.
+    // ROW_NUMBER is supported on PostgreSQL (always) and SQLite ≥ 3.25.
     format!(
         "{comment}\
          CREATE VIEW IF NOT EXISTS verisimdb_{table_name}_with_provenance AS\n\
@@ -180,12 +201,11 @@ fn generate_provenance_view(
          \x20   SELECT entity_id, operation, actor, timestamp, hash\n\
          \x20   FROM (\n\
          \x20       SELECT entity_id, operation, actor, timestamp, hash,\n\
-         \x20              ROW_NUMBER() OVER (PARTITION BY entity_id\n\
-         \x20                                 ORDER BY timestamp DESC) AS _rn\n\
+         \x20              ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY timestamp DESC) AS _rn\n\
          \x20       FROM verisimdb_provenance_log\n\
          \x20       WHERE table_name = '{table_name}'\n\
          \x20   ) ranked\n\
-         \x20   WHERE ranked._rn = 1\n\
+         \x20   WHERE _rn = 1\n\
          ) prov ON prov.entity_id = ({entity_id_expr});\n\n",
         columns = column_list.join(",\n"),
     )
@@ -383,6 +403,35 @@ mod tests {
         assert!(interceptor.access_filter.is_none());
     }
 
+    /// The provenance view must use a window-function `ROW_NUMBER()` pattern
+    /// instead of the old (broken) correlated MAX(timestamp) subquery.
+    /// Closes #40.
+    #[test]
+    fn test_provenance_view_uses_window_function_for_latest_per_entity() {
+        let schema = test_schema();
+        let octad = OctadConfig {
+            enable_provenance: true,
+            enable_lineage: false,
+            enable_temporal: false,
+            enable_access_control: false,
+            enable_constraints: false,
+            enable_simulation: false,
+        };
+        let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
+        let view = interceptors[0]
+            .provenance_view
+            .as_ref()
+            .expect("provenance view present when enabled");
+        assert!(
+            view.contains("ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY timestamp DESC)"),
+            "provenance view should use window-function latest-per-entity"
+        );
+        assert!(
+            !view.contains("MAX(p2.timestamp)"),
+            "old correlated MAX(timestamp) pattern must be gone"
+        );
+    }
+
     #[test]
     fn test_provenance_view_references_table() {
         let schema = test_schema();
@@ -396,25 +445,11 @@ mod tests {
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
-        let view = interceptors[0]
-            .provenance_view
-            .as_ref()
-            .expect("TODO: handle error");
+        let view = interceptors[0].provenance_view.as_ref().expect("TODO: handle error");
         assert!(view.contains("verisimdb_posts_with_provenance"));
         assert!(view.contains("posts.id"));
         assert!(view.contains("posts.title"));
         assert!(view.contains("verisimdb_provenance_log"));
-
-        // V-L2-K1: the latest-per-entity selection uses ROW_NUMBER() OVER
-        // PARTITION BY, not the previous broken self-correlation.
-        assert!(
-            view.contains("ROW_NUMBER() OVER (PARTITION BY entity_id"),
-            "provenance view must use ROW_NUMBER()-partition pattern (V-L2-K1)"
-        );
-        assert!(
-            !view.contains("WHERE p2.entity_id = verisimdb_provenance_log.entity_id"),
-            "broken self-correlation must be gone"
-        );
     }
 
     #[test]
@@ -430,10 +465,7 @@ mod tests {
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
-        let view = interceptors[0]
-            .temporal_view
-            .as_ref()
-            .expect("TODO: handle error");
+        let view = interceptors[0].temporal_view.as_ref().expect("TODO: handle error");
         assert!(view.contains("verisimdb_posts_with_temporal"));
         assert!(view.contains("verisimdb_temporal_versions"));
         assert!(view.contains("valid_to IS NULL"));
@@ -454,9 +486,46 @@ mod tests {
     fn test_entity_id_expr_composite_pk() {
         let expr =
             build_entity_id_expr(&["post_id", "tag_id"], "post_tags", DatabaseBackend::SQLite);
+        // Both columns are referenced.
         assert!(expr.contains("post_tags.post_id"));
         assert!(expr.contains("post_tags.tag_id"));
-        assert!(expr.contains("'::'"));
+        // Length-prefix encoding is in use.
+        assert!(expr.contains("LENGTH"));
+        assert!(expr.contains("':'"));
+        // NULL-safe via COALESCE → 'N'.
+        assert!(expr.contains("COALESCE"));
+        assert!(expr.contains("'N'"));
+        // The old ambiguous `::` separator is gone.
+        assert!(!expr.contains("'::'"));
+    }
+
+    /// Length-prefix encoding must distinguish PKs that the old `::`
+    /// separator collapsed into the same string. Verified at the
+    /// **expression-shape** level: distinct PK column sets produce
+    /// distinct generated SQL, and the per-column emitted expression
+    /// is always length-prefixed regardless of value content.
+    #[test]
+    fn test_entity_id_expr_composite_no_separator_collision() {
+        let two = build_entity_id_expr(&["a", "b"], "t", DatabaseBackend::PostgreSQL);
+        let three = build_entity_id_expr(&["a", "b", "c"], "t", DatabaseBackend::PostgreSQL);
+        // Different column counts produce different shapes.
+        assert_ne!(two, three);
+        // Each column gets its own length-prefix block.
+        assert_eq!(two.matches("LENGTH").count(), 2);
+        assert_eq!(three.matches("LENGTH").count(), 3);
+        // No `::` separator anywhere — that ambiguity is gone.
+        assert!(!two.contains("'::'"));
+    }
+
+    #[test]
+    fn test_entity_id_expr_composite_mongodb_uses_plus_concat() {
+        let expr =
+            build_entity_id_expr(&["account_id", "txn_id"], "ledger", DatabaseBackend::MongoDB);
+        assert!(expr.contains("ledger.account_id"));
+        assert!(expr.contains("ledger.txn_id"));
+        // MongoDB concat operator is `+`, not `||`.
+        assert!(expr.contains(" + "));
+        assert!(!expr.contains(" || "));
     }
 
     #[test]
