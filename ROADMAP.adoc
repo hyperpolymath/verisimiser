@@ -9,7 +9,7 @@
 * [x] CLI with subcommands (init, start, drift, provenance, history, status, octad, doctor, gc, validate, version)
 * [x] Manifest parser (verisimiser.toml with `[tier1]`/`[tier2]`/`[retention]` config)
 * [x] Concerns octad fixed canonical (ADR-0004): Data, Metadata, Provenance, Lineage, Constraints, AccessControl, Temporal, Simulation
-* [x] Tier 1 data types per concern (ProvenanceRecord, TemporalVersion, DriftReport, AccessPredicate)
+* [x] Tier 1 data types per concern (ProvenanceEntry, TemporalVersion, DriftReport, AccessPredicate)
 * [x] ABI module stubs (Idris2 + Zig FFI) and domain-tagged `compute_hash`
 * [x] Drift categories pinned (ADR-0003): input / distance / threshold per category
 * [x] README rewritten around concerns octad (V-L1-A2, #20)
