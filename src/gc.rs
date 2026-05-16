@@ -13,7 +13,7 @@ use chrono::{Duration, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::manifest::{Manifest, RetentionConfig};
+use crate::manifest::Manifest;
 
 /// Number of rows purged per dimension by [`run_gc`].
 #[derive(Debug, Clone, Serialize, Default)]
@@ -135,16 +135,12 @@ fn purge_by_age(
 
 #[cfg(test)]
 mod tests {
-    use super::{RetentionConfig, run_gc};
-    use crate::manifest::{Manifest, SidecarConfig};
+    use super::run_gc;
+    use crate::manifest::{Manifest, RetentionConfig, SidecarConfig};
     use rusqlite::Connection;
 
     /// Build a Manifest with a temp SQLite sidecar, retention set as given.
-    fn fixture(
-        sidecar_path: &str,
-        retention: RetentionConfig,
-        storage: &str,
-    ) -> Manifest {
+    fn fixture(sidecar_path: &str, retention: RetentionConfig, storage: &str) -> Manifest {
         let mut m: Manifest = toml::from_str(
             "[database]\n\
              backend = \"sqlite\"\n",
@@ -246,7 +242,9 @@ mod tests {
         // Verify nothing was actually deleted.
         let conn = Connection::open(sidecar_str).unwrap();
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM verisimdb_provenance_log", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM verisimdb_provenance_log", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(n, 2, "dry-run must not delete");
     }
@@ -272,14 +270,20 @@ mod tests {
 
         let conn = Connection::open(sidecar_str).unwrap();
         let provenance_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM verisimdb_provenance_log", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM verisimdb_provenance_log", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(provenance_count, 1, "fresh provenance kept");
 
         // The current temporal version (e2, valid_to IS NULL) must survive
         // even though it is old enough to qualify on valid_from.
         let temporal_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM verisimdb_temporal_versions", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM verisimdb_temporal_versions",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(temporal_count, 2);
         let current_survived: i64 = conn

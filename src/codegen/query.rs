@@ -445,7 +445,10 @@ mod tests {
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
-        let view = interceptors[0].provenance_view.as_ref().expect("TODO: handle error");
+        let view = interceptors[0]
+            .provenance_view
+            .as_ref()
+            .expect("TODO: handle error");
         assert!(view.contains("verisimdb_posts_with_provenance"));
         assert!(view.contains("posts.id"));
         assert!(view.contains("posts.title"));
@@ -465,7 +468,10 @@ mod tests {
         };
         let interceptors = generate_interceptors(&schema, &octad, DatabaseBackend::SQLite);
 
-        let view = interceptors[0].temporal_view.as_ref().expect("TODO: handle error");
+        let view = interceptors[0]
+            .temporal_view
+            .as_ref()
+            .expect("TODO: handle error");
         assert!(view.contains("verisimdb_posts_with_temporal"));
         assert!(view.contains("verisimdb_temporal_versions"));
         assert!(view.contains("valid_to IS NULL"));
@@ -519,8 +525,11 @@ mod tests {
 
     #[test]
     fn test_entity_id_expr_composite_mongodb_uses_plus_concat() {
-        let expr =
-            build_entity_id_expr(&["account_id", "txn_id"], "ledger", DatabaseBackend::MongoDB);
+        let expr = build_entity_id_expr(
+            &["account_id", "txn_id"],
+            "ledger",
+            DatabaseBackend::MongoDB,
+        );
         assert!(expr.contains("ledger.account_id"));
         assert!(expr.contains("ledger.txn_id"));
         // MongoDB concat operator is `+`, not `||`.

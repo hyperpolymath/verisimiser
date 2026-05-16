@@ -58,7 +58,8 @@ fn check_command_in_path(cmd: &str, description: &str) -> ValidationCheck {
             passed: false,
             detail: Some(format!(
                 "`{} --version` exited with status {:?}",
-                cmd, out.status.code()
+                cmd,
+                out.status.code()
             )),
         },
         Err(e) => ValidationCheck {

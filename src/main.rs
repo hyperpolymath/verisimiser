@@ -222,8 +222,8 @@ fn main() -> Result<()> {
             }
             let conn = rusqlite::Connection::open(&m.sidecar.path)?;
             // Distinct entity_ids that have at least one row in temporal_versions.
-            let mut stmt = conn
-                .prepare("SELECT DISTINCT entity_id FROM verisimdb_temporal_versions")?;
+            let mut stmt =
+                conn.prepare("SELECT DISTINCT entity_id FROM verisimdb_temporal_versions")?;
             let entities: Vec<String> = stmt
                 .query_map([], |r| r.get::<_, String>(0))?
                 .collect::<rusqlite::Result<_>>()?;
@@ -235,10 +235,7 @@ fn main() -> Result<()> {
                     continue;
                 };
                 if report.overall_score >= threshold {
-                    println!(
-                        "  {} drift={:.3}",
-                        report.entity_id, report.overall_score
-                    );
+                    println!("  {} drift={:.3}", report.entity_id, report.overall_score);
                     reported += 1;
                 }
             }
@@ -278,7 +275,7 @@ fn main() -> Result<()> {
                 let report = manifest::status_report(&m);
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                manifest::print_status(&m);
+                manifest::print_status(&m)?;
             }
             Ok(())
         }
@@ -308,8 +305,15 @@ fn main() -> Result<()> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                let action = if report.dry_run { "would delete" } else { "deleted" };
-                println!("verisimiser gc ({}):", if report.dry_run { "dry-run" } else { "apply" });
+                let action = if report.dry_run {
+                    "would delete"
+                } else {
+                    "deleted"
+                };
+                println!(
+                    "verisimiser gc ({}):",
+                    if report.dry_run { "dry-run" } else { "apply" }
+                );
                 println!("  sidecar:    {}", report.sidecar);
                 println!("  provenance: {action} {} rows", report.provenance_deleted);
                 println!("  temporal:   {action} {} rows", report.temporal_deleted);
@@ -339,11 +343,7 @@ fn main() -> Result<()> {
 /// Render a `ValidationReport` (from `validate` or `doctor`) and exit
 /// non-zero if any check failed. Plain-text by default; JSON when
 /// `json == true`.
-fn emit_report(
-    report: &manifest::ValidationReport,
-    json: bool,
-    kind: &str,
-) -> Result<()> {
+fn emit_report(report: &manifest::ValidationReport, json: bool, kind: &str) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(report)?);
     } else {

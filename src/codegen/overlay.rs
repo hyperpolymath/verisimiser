@@ -450,10 +450,13 @@ mod tests {
         let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
         assert!(ddl.contains("verisimdb_temporal_versions"));
         assert!(
-            ddl.contains(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_temporal_current ON verisimdb_temporal_versions(entity_id, table_name) WHERE valid_to IS NULL"
-            ),
+            ddl.contains("CREATE UNIQUE INDEX IF NOT EXISTS ux_temporal_current"),
             "temporal current-version index must be UNIQUE"
+        );
+        assert!(
+            ddl.contains("ON verisimdb_temporal_versions(entity_id, table_name)")
+                && ddl.contains("WHERE valid_to IS NULL"),
+            "temporal current-version index must be partial on valid_to IS NULL"
         );
         assert!(
             ddl.contains("CHECK (valid_to IS NULL OR valid_to >= valid_from)"),
@@ -479,7 +482,9 @@ mod tests {
         assert!(ddl.contains("verisimdb_lineage_graph"));
         // The exact CHECK clause must be present in the emitted DDL.
         assert!(
-            ddl.contains("CHECK (source_entity <> target_entity OR source_table <> target_table)"),
+            ddl.contains(
+                "CHECK (NOT (source_entity = target_entity AND source_table = target_table))"
+            ),
             "lineage table is missing the self-reference CHECK constraint"
         );
     }

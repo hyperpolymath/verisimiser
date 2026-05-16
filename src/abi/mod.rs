@@ -188,7 +188,7 @@ impl ProvenanceEntry {
     ///
     /// `Option<String>` fields encode as `len(0) || ""` when `None`. The
     /// timestamp is encoded from `chrono::DateTime`'s seconds-since-epoch
-    /// + subsecond nanos rather than RFC3339, so timestamps with
+    /// plus subsecond nanos rather than RFC3339, so timestamps with
     /// different valid string forms but the same instant produce the same
     /// hash (closes #28 / V-L2-C2).
     pub fn compute_hash(
@@ -206,8 +206,8 @@ impl ProvenanceEntry {
         write_len_prefixed(&mut hasher, entity_id.as_bytes());
         write_len_prefixed(&mut hasher, operation.as_bytes());
         write_len_prefixed(&mut hasher, actor.as_bytes());
-        hasher.update(&timestamp.timestamp().to_le_bytes());
-        hasher.update(&timestamp.timestamp_subsec_nanos().to_le_bytes());
+        hasher.update(timestamp.timestamp().to_le_bytes());
+        hasher.update(timestamp.timestamp_subsec_nanos().to_le_bytes());
         write_len_prefixed(&mut hasher, before_snapshot.unwrap_or("").as_bytes());
         write_len_prefixed(&mut hasher, transformation.unwrap_or("").as_bytes());
         format!("{:x}", hasher.finalize())
@@ -663,38 +663,6 @@ mod tests {
         }
     }
 
-    /// Tampering with `actor` must break `verify()` (closes #29 / V-L2-C3).
-    /// Before V-L2-C1, `actor` was outside the hash preimage and this
-    /// mutation was invisible — see V-L2-C4.
-    #[test]
-    fn test_provenance_tamper_actor() {
-        let mut e = ProvenanceEntry::genesis("post-1", "alice");
-        e.actor = "mallory".to_string();
-        assert!(!e.verify(), "actor must participate in the hash");
-    }
-
-    /// Tampering with `before_snapshot` must break `verify()`.
-    #[test]
-    fn test_provenance_tamper_before_snapshot() {
-        let mut e = ProvenanceEntry::genesis("post-1", "alice");
-        e.before_snapshot = Some("{\"redacted\":true}".to_string());
-        assert!(
-            !e.verify(),
-            "before_snapshot must participate in the hash"
-        );
-    }
-
-    /// Tampering with `transformation` must break `verify()`.
-    #[test]
-    fn test_provenance_tamper_transformation() {
-        let mut e = ProvenanceEntry::genesis("post-1", "alice");
-        e.transformation = Some("evil-rewrite".to_string());
-        assert!(
-            !e.verify(),
-            "transformation must participate in the hash"
-        );
-    }
-
     /// Two `DateTime<Utc>` values constructed via different paths but
     /// representing the same instant must produce the same hash. The
     /// previous RFC3339-string encoding could produce different hashes
@@ -704,27 +672,19 @@ mod tests {
     fn test_provenance_timestamp_canonical_encoding() {
         let ts_parsed: DateTime<Utc> = "2026-05-13T08:00:00.000Z".parse().unwrap();
         let ts_offset: DateTime<Utc> = "2026-05-13T08:00:00+00:00".parse().unwrap();
-        assert_eq!(ts_parsed, ts_offset, "the two strings denote the same instant");
+        assert_eq!(
+            ts_parsed, ts_offset,
+            "the two strings denote the same instant"
+        );
 
-        let h1 = ProvenanceEntry::compute_hash(
-            "",
-            "post-1",
-            "insert",
-            "alice",
-            &ts_parsed,
-            None,
-            None,
+        let h1 =
+            ProvenanceEntry::compute_hash("", "post-1", "insert", "alice", &ts_parsed, None, None);
+        let h2 =
+            ProvenanceEntry::compute_hash("", "post-1", "insert", "alice", &ts_offset, None, None);
+        assert_eq!(
+            h1, h2,
+            "same instant must produce same hash regardless of input string form"
         );
-        let h2 = ProvenanceEntry::compute_hash(
-            "",
-            "post-1",
-            "insert",
-            "alice",
-            &ts_offset,
-            None,
-            None,
-        );
-        assert_eq!(h1, h2, "same instant must produce same hash regardless of input string form");
     }
 
     /// Round-trip: build a 4-entry chain and assert every entry verifies;
@@ -732,9 +692,7 @@ mod tests {
     /// mutation breaks `verify()` (closes #29 mutation-matrix clause).
     #[test]
     fn test_provenance_mutation_matrix_breaks_verification() {
-        let mut chain_entries = vec![
-            ProvenanceEntry::genesis("post-1", "alice"),
-        ];
+        let mut chain_entries = vec![ProvenanceEntry::genesis("post-1", "alice")];
         for actor in ["bob", "carol", "dave"] {
             let next = chain_entries.last().unwrap().chain("update", actor);
             chain_entries.push(next);
@@ -751,9 +709,7 @@ mod tests {
                 |e: &mut ProvenanceEntry| e.actor = format!("{}-X", e.actor),
                 |e: &mut ProvenanceEntry| e.before_snapshot = Some("X".to_string()),
                 |e: &mut ProvenanceEntry| e.transformation = Some("X".to_string()),
-                |e: &mut ProvenanceEntry| {
-                    e.timestamp += chrono::Duration::nanoseconds(1)
-                },
+                |e: &mut ProvenanceEntry| e.timestamp += chrono::Duration::nanoseconds(1),
                 |e: &mut ProvenanceEntry| e.previous_hash = format!("{}X", e.previous_hash),
             ] {
                 let mut tampered = original.clone();

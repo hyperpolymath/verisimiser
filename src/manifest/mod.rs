@@ -355,11 +355,7 @@ mod validate_manifest_tests {
         std::fs::write(&path, body).expect("write");
 
         let report = validate_manifest(path.to_str().unwrap());
-        assert!(
-            report.passed,
-            "expected pass; checks: {:?}",
-            report.checks
-        );
+        assert!(report.passed, "expected pass; checks: {:?}", report.checks);
         assert!(report.failed_count() == 0);
     }
 
@@ -435,10 +431,7 @@ mod load_manifest_tests {
         // The exact line/column varies with toml's internal pointer, but
         // there must be a `:<digit>:<digit>:` somewhere in the message.
         let span_re = regex_like_line_col(&msg);
-        assert!(
-            span_re,
-            "error must include filename:line:col; got: {msg}"
-        );
+        assert!(span_re, "error must include filename:line:col; got: {msg}");
     }
 
     /// Lightweight substitute for a regex match (no regex crate added):
@@ -566,12 +559,7 @@ pub fn load_manifest(path: &str) -> Result<Manifest> {
 fn byte_offset_to_line_col(text: &str, offset: usize) -> (usize, usize) {
     let prefix = &text[..offset.min(text.len())];
     let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
-    let col = prefix
-        .bytes()
-        .rev()
-        .take_while(|b| *b != b'\n')
-        .count()
-        + 1;
+    let col = prefix.bytes().rev().take_while(|b| *b != b'\n').count() + 1;
     (line, col)
 }
 
@@ -656,7 +644,7 @@ lineage-days    = {lineage_days}
 
 #[cfg(test)]
 mod init_template_tests {
-    use super::{render_manifest_template, Manifest, OctadConfig};
+    use super::{Manifest, OctadConfig, render_manifest_template};
 
     #[test]
     fn template_round_trips_through_toml() {
@@ -887,7 +875,11 @@ pub fn status_report(manifest: &Manifest) -> StatusReport {
     };
     StatusReport {
         name,
-        backend: manifest.database.effective_backend().to_string(),
+        backend: manifest
+            .database
+            .effective_backend()
+            .unwrap_or(manifest.database.backend.as_str())
+            .to_string(),
         sidecar_path: manifest.sidecar.path.clone(),
         sidecar_storage: manifest.sidecar.storage.clone(),
         octad: OctadStatus {
