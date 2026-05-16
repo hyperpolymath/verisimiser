@@ -15,7 +15,7 @@
 // — see ADR-0002 / #27); this module just persists the entries.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, TransactionBehavior};
+use rusqlite::{Connection, TransactionBehavior, params};
 
 // =========================================================================
 // Canonical entry shape
@@ -255,16 +255,8 @@ mod tests {
     #[test]
     fn genesis_entry_chains_from_empty() {
         let mut conn = open_sidecar();
-        let hash = append_provenance(
-            &mut conn,
-            "e1",
-            "users",
-            "insert",
-            "alice",
-            None,
-            None,
-        )
-        .unwrap();
+        let hash =
+            append_provenance(&mut conn, "e1", "users", "insert", "alice", None, None).unwrap();
         assert!(!hash.is_empty());
 
         let prev: String = conn
@@ -289,10 +281,8 @@ mod tests {
     #[test]
     fn sequential_appends_chain_correctly() {
         let mut conn = open_sidecar();
-        let h1 = append_provenance(
-            &mut conn, "e1", "users", "insert", "alice", None, None,
-        )
-        .unwrap();
+        let h1 =
+            append_provenance(&mut conn, "e1", "users", "insert", "alice", None, None).unwrap();
         let h2 = append_provenance(
             &mut conn,
             "e1",
@@ -303,10 +293,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let h3 = append_provenance(
-            &mut conn, "e1", "users", "delete", "bob", None, None,
-        )
-        .unwrap();
+        let h3 = append_provenance(&mut conn, "e1", "users", "delete", "bob", None, None).unwrap();
         assert_ne!(h1, h2);
         assert_ne!(h2, h3);
 

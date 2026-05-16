@@ -107,7 +107,7 @@ pub fn temporal_drift_score(versions: &[i64]) -> f64 {
 
 #[cfg(test)]
 mod temporal_drift_tests {
-    use super::{detect_temporal_drift, temporal_drift_score, DriftCategory};
+    use super::{DriftCategory, detect_temporal_drift, temporal_drift_score};
     use rusqlite::Connection;
 
     /// Identical versions → score 0.0.

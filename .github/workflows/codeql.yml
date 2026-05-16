@@ -22,7 +22,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - language: javascript-typescript
+          # verisimiser is a Rust crate with zero JS/TS source. The estate
+          # template's default `javascript-typescript` made CodeQL fail with
+          # a "no source / configuration error" on every run (pre-existing
+          # red on main, not introduced by #102). Analyse the language that
+          # actually exists. `build-mode: none` is the correct (buildless)
+          # extraction mode for Rust in CodeQL.
+          - language: rust
             build-mode: none
 
     steps:

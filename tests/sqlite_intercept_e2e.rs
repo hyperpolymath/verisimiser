@@ -17,7 +17,7 @@
 // (WAL, file locks, separate processes-files) rather than the
 // in-memory shortcut used by unit tests.
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::sync::Arc;
 use tempfile::TempDir;
 use verisimiser::intercept::sqlite::{EntityIdResolver, SqliteInterceptor};
@@ -43,10 +43,8 @@ fn setup() -> (TempDir, Connection, SqliteInterceptor) {
 
     // Resolver: route rowid to a logical entity id `accounts:N` so
     // the sidecar entries are human-readable.
-    let resolver: EntityIdResolver =
-        Arc::new(|table, rowid| format!("{table}:{rowid}"));
-    let interceptor = SqliteInterceptor::new(sidecar, "e2e-test")
-        .with_resolver(resolver);
+    let resolver: EntityIdResolver = Arc::new(|table, rowid| format!("{table}:{rowid}"));
+    let interceptor = SqliteInterceptor::new(sidecar, "e2e-test").with_resolver(resolver);
     interceptor.install(&target);
 
     (tmp, target, interceptor)
@@ -135,7 +133,10 @@ fn e2e_mixed_workload_verifies_all_chains() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(leaked, 0, "verisimdb_* tables must not leak into the target");
+    assert_eq!(
+        leaked, 0,
+        "verisimdb_* tables must not leak into the target"
+    );
 }
 
 #[test]
@@ -151,7 +152,10 @@ fn e2e_chain_survives_reopen_of_sidecar() {
         )
         .unwrap();
     target
-        .execute("UPDATE accounts SET balance = 2000 WHERE id = ?1", params![42i64])
+        .execute(
+            "UPDATE accounts SET balance = 2000 WHERE id = ?1",
+            params![42i64],
+        )
         .unwrap();
 
     // Drop the interceptor (and its sidecar handle); reopen and verify.

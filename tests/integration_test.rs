@@ -78,8 +78,7 @@ fn test_full_pipeline_blog_schema() {
         enable_constraints: true,
         enable_simulation: false,
     };
-    let overlay_ddl =
-        overlay::generate_sidecar_schema(&schema, &octad).expect("schema is valid");
+    let overlay_ddl = overlay::generate_sidecar_schema(&schema, &octad).expect("schema is valid");
 
     // Verify all expected sidecar tables are present.
     assert!(
@@ -236,7 +235,7 @@ vector = false
 
     assert_eq!(manifest.verisimiser.name, "legacy-db");
     assert_eq!(manifest.database.target_db, "postgresql");
-    assert_eq!(manifest.database.effective_backend(), "postgresql");
+    assert_eq!(manifest.database.effective_backend().unwrap(), "postgresql");
     assert!(manifest.tier1.provenance);
     assert!(manifest.tier1.temporal_versioning);
     assert!(manifest.tier1.drift_detection);
@@ -284,7 +283,14 @@ fn test_provenance_chain_integrity_multi_step() {
     tampered_op.operation = "delete".to_string();
     assert!(
         !tampered_op.verify(),
-        "Tampering with operation should break verification"
+        "tampering with operation must break verify"
+    );
+
+    let mut tampered_snap = update1.clone();
+    tampered_snap.before_snapshot = Some("{}".into());
+    assert!(
+        !tampered_snap.verify(),
+        "before_snapshot is part of the hash; tampering with it must break verify"
     );
 }
 
@@ -436,7 +442,9 @@ fn test_end_to_end_file_workflow() {
         .unwrap();
     }
 
-    // Write a manifest file.
+    // Write a manifest file. Note: on Windows, schema_path uses backslashes
+    // which are escape characters in TOML basic strings — emit the path as a
+    // TOML literal string (single-quoted) to dodge escape interpretation.
     let manifest_path = dir.path().join("verisimiser.toml");
     {
         let mut f = std::fs::File::create(&manifest_path).unwrap();
@@ -449,7 +457,7 @@ name = "test-articles"
 [database]
 backend = "sqlite"
 connection-string-env = "TEST_DB"
-schema-source = "{}"
+schema-source = '{}'
 
 [octad]
 enable-provenance = true
@@ -478,8 +486,8 @@ path = ".verisim/test.db"
     assert_eq!(schema.tables[0].name, "articles");
 
     // Generate overlay.
-    let overlay_ddl = overlay::generate_sidecar_schema(&schema, &manifest.octad)
-        .expect("schema is valid");
+    let overlay_ddl =
+        overlay::generate_sidecar_schema(&schema, &manifest.octad).expect("schema is valid");
     assert!(overlay_ddl.contains("verisimdb_provenance_log"));
     assert!(overlay_ddl.contains("verisimdb_temporal_versions"));
     assert!(

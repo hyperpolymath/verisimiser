@@ -50,6 +50,14 @@ install:
 assail:
     @command -v panic-attack >/dev/null 2>&1 && panic-attack assail . || echo "panic-attack not found — install from https://github.com/hyperpolymath/panic-attacker"
 
+# --- Domain-Specific Recipes (verisimiser) ---
+#
+# (Reserved.) Recipes for clap subcommands like `augment`, `check-octad`,
+# and `migrate` were removed per ADR-0003: they wrapped subcommands that
+# don't exist in src/main.rs (the real subcommands are `init`, `generate`,
+# `start`, `drift`, `provenance`, `history`, `status`, `octad`).
+# Re-add wrappers here when their underlying subcommands ship.
+
 # Run contractile checks (informational only — not required by CI per ADR-0008)
 contractile-check:
     @echo "Running contractile validation..."

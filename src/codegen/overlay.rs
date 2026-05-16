@@ -18,6 +18,52 @@ use crate::codegen::parser::ParsedSchema;
 use crate::manifest::OctadConfig;
 
 // ---------------------------------------------------------------------------
+// Identifier validation (V-L2-G1)
+// ---------------------------------------------------------------------------
+
+/// Permitted identifier shape for any user-controlled name that flows into
+/// generated DDL: leading ASCII letter or underscore, then ASCII letters,
+/// digits, or underscores. This is a deliberately conservative subset of
+/// SQL's quoted-identifier rules — it rejects names that would be valid
+/// under quoting but make our `format!()`-based DDL emission unsafe.
+///
+/// Returns `Err` with the offending identifier quoted so the user can
+/// rename or alias the source table.
+fn validate_identifier(name: &str) -> std::result::Result<&str, String> {
+    if name.is_empty() {
+        return Err("identifier is empty".into());
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return Err(format!(
+            "identifier {:?} must start with an ASCII letter or underscore",
+            name
+        ));
+    }
+    for c in chars {
+        if !(c.is_ascii_alphanumeric() || c == '_') {
+            return Err(format!(
+                "identifier {:?} contains invalid character {:?}; \
+                 only ASCII letters, digits, and underscores are allowed \
+                 in identifiers that flow into generated DDL (V-L2-G1)",
+                name, c
+            ));
+        }
+    }
+    Ok(name)
+}
+
+/// Convenience: validate and panic with a structured message if invalid.
+/// Used in the few DDL-emitting paths that don't propagate errors.
+fn must_validate_identifier(name: &str) -> &str {
+    match validate_identifier(name) {
+        Ok(n) => n,
+        Err(e) => panic!("invalid identifier in generated DDL: {}", e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Overlay generation
 // ---------------------------------------------------------------------------
 
@@ -102,20 +148,26 @@ fn generate_metadata_table(schema: &ParsedSchema) -> String {
     );
 
     // Generate INSERT statements for each discovered table.
+    //
+    // V-L2-G1: every identifier flowing into the SQL string here is
+    // validated. Anything that wouldn't match `^[A-Za-z_][A-Za-z0-9_]*$`
+    // is rejected at codegen time rather than allowed to land in DDL
+    // (where it would be an injection vector).
     if !schema.tables.is_empty() {
         ddl.push_str("-- Seed metadata from parsed schema\n");
         for table in &schema.tables {
+            let table_name = must_validate_identifier(&table.name);
             let pk_cols: Vec<&str> = table
                 .columns
                 .iter()
                 .filter(|c| c.is_primary_key)
-                .map(|c| c.name.as_str())
+                .map(|c| must_validate_identifier(c.name.as_str()))
                 .collect();
             let pk_str = pk_cols.join(",");
             ddl.push_str(&format!(
                 "INSERT OR IGNORE INTO verisimdb_metadata (table_name, column_count, pk_columns, discovered_at)\n\
                  \x20   VALUES ('{}', {}, '{}', datetime('now'));\n",
-                table.name,
+                table_name,
                 table.columns.len(),
                 pk_str,
             ));
@@ -130,7 +182,13 @@ fn generate_metadata_table(schema: &ParsedSchema) -> String {
 ///
 /// Stores a SHA-256 hash-chained audit trail of all data modifications.
 /// Each row chains to its predecessor via `previous_hash`, forming an
-/// append-only, tamper-evident log.
+/// append-only, tamper-evident log (see
+/// `docs/theory/provenance-threat-model.adoc`).
+///
+/// The `chain_head` table is the per-entity head pointer used for the
+/// write-path lock (V-L2-L1). The UNIQUE INDEX on `(entity_id,
+/// previous_hash)` (V-L2-L2) makes chain forks structurally impossible
+/// — defence in depth for if the lock is ever bypassed.
 fn generate_provenance_table() -> String {
     "-- Provenance: SHA-256 hash-chained audit trail\n\
      CREATE TABLE IF NOT EXISTS verisimdb_provenance_log (\n\
@@ -138,15 +196,31 @@ fn generate_provenance_table() -> String {
      \x20   previous_hash TEXT NOT NULL,\n\
      \x20   entity_id     TEXT NOT NULL,\n\
      \x20   table_name    TEXT NOT NULL,\n\
-     \x20   operation     TEXT NOT NULL,  -- insert, update, delete, transform\n\
+     \x20   operation     TEXT NOT NULL CHECK (operation IN ('insert','update','delete','transform')),  -- V-L2-J1\n\
      \x20   actor         TEXT NOT NULL,\n\
      \x20   timestamp     TEXT NOT NULL,  -- ISO 8601\n\
      \x20   before_snapshot TEXT,          -- JSON of entity state before operation\n\
      \x20   transformation  TEXT,          -- description of transformation applied\n\
      \x20   CHECK (operation IN ('insert','update','delete','transform'))\n\
      );\n\
+     -- V-L2-L2: forbid chain forks at the DB level. Genesis records all\n\
+     -- carry previous_hash='' so this also enforces a single genesis per\n\
+     -- entity.\n\
+     CREATE UNIQUE INDEX IF NOT EXISTS ux_provenance_chain\n\
+     \x20   ON verisimdb_provenance_log(entity_id, previous_hash);\n\
      CREATE INDEX IF NOT EXISTS idx_provenance_entity ON verisimdb_provenance_log(entity_id);\n\
-     CREATE INDEX IF NOT EXISTS idx_provenance_table  ON verisimdb_provenance_log(table_name);\n\n"
+     CREATE INDEX IF NOT EXISTS idx_provenance_table  ON verisimdb_provenance_log(table_name);\n\
+     \n\
+     -- V-L2-L1: per-entity head pointer. The write path takes a row\n\
+     -- lock here (SELECT … FOR UPDATE / BEGIN IMMEDIATE) so concurrent\n\
+     -- appenders on the same entity serialise; cross-entity appends\n\
+     -- remain parallel. Each successful append updates head_hash in\n\
+     -- the same transaction as the INSERT into verisimdb_provenance_log.\n\
+     CREATE TABLE IF NOT EXISTS verisimdb_provenance_chain_head (\n\
+     \x20   entity_id  TEXT PRIMARY KEY,\n\
+     \x20   head_hash  TEXT NOT NULL,\n\
+     \x20   updated_at TEXT NOT NULL\n\
+     );\n\n"
         .to_string()
 }
 
@@ -156,22 +230,20 @@ fn generate_provenance_table() -> String {
 /// Together, these edges form a DAG that can be traversed to answer
 /// "where did this data come from?" and "what is affected if this changes?"
 fn generate_lineage_table() -> String {
-    // The CHECK constraint refuses edges whose source and target are the
-    // same (entity, table) pair — i.e. self-loops, which would falsify
-    // the README's "DAG" claim at the structural level. Closes #42.
-    // (Multi-hop cycle prevention is a runtime concern tracked separately.)
-    "-- Lineage: data derivation DAG\n\
+    "-- Lineage: data derivation graph (DAG by intent; cycle prevention is\n\
+     -- a runtime concern — see V-L1-G1 / V-L2-I2).\n\
      CREATE TABLE IF NOT EXISTS verisimdb_lineage_graph (\n\
      \x20   edge_id         TEXT PRIMARY KEY,\n\
      \x20   source_entity   TEXT NOT NULL,\n\
      \x20   source_table    TEXT NOT NULL,\n\
      \x20   target_entity   TEXT NOT NULL,\n\
      \x20   target_table    TEXT NOT NULL,\n\
-     \x20   derivation_type TEXT NOT NULL,  -- copy, transform, aggregate, join, filter\n\
+     \x20   derivation_type TEXT NOT NULL\n\
+     \x20       CHECK (derivation_type IN ('copy','transform','aggregate','join','filter')),  -- V-L2-J1\n\
      \x20   description     TEXT,\n\
      \x20   created_at      TEXT NOT NULL,  -- ISO 8601\n\
-     \x20   CHECK (source_entity <> target_entity OR source_table <> target_table),\n\
-     \x20   CHECK (derivation_type IN ('copy','transform','aggregate','join','filter'))\n\
+     \x20   -- V-L2-I1: self-edges are not derivations; rejected at DB level.\n\
+     \x20   CHECK (NOT (source_entity = target_entity AND source_table = target_table))\n\
      );\n\
      CREATE INDEX IF NOT EXISTS idx_lineage_source ON verisimdb_lineage_graph(source_entity);\n\
      CREATE INDEX IF NOT EXISTS idx_lineage_target ON verisimdb_lineage_graph(target_entity);\n\n"
@@ -184,23 +256,27 @@ fn generate_lineage_table() -> String {
 /// point-in-time queries and rollback. Each version records when it
 /// became active (`valid_from`) and when it was superseded (`valid_to`).
 fn generate_temporal_table() -> String {
-    // The partial UNIQUE index enforces "at most one current version per
-    // (entity, table)" at the storage layer — two concurrent writers can no
-    // longer both insert a row with `valid_to IS NULL` for the same entity.
-    // The CHECK ensures valid_to never precedes valid_from. Closes #41.
-    "-- Temporal: version history with point-in-time support\n\
+    "-- Temporal: version history with point-in-time support.\n\
+     -- V-L2-H1: the partial UNIQUE INDEX enforces exactly one\n\
+     -- current row per (entity, table) — \"only one version is\n\
+     -- valid right now\" was an application-layer invariant before;\n\
+     -- now it's structural.\n\
+     -- V-L2-J1: operation is a closed set.\n\
+     -- V-L2-H2: valid_to (if set) must not predate valid_from.\n\
      CREATE TABLE IF NOT EXISTS verisimdb_temporal_versions (\n\
      \x20   entity_id  TEXT NOT NULL,\n\
      \x20   table_name TEXT NOT NULL,\n\
-     \x20   version    INTEGER NOT NULL,\n\
+     \x20   version    INTEGER NOT NULL CHECK (version >= 1),\n\
      \x20   valid_from TEXT NOT NULL,   -- ISO 8601\n\
      \x20   valid_to   TEXT,            -- ISO 8601, NULL if current\n\
      \x20   snapshot   TEXT NOT NULL,   -- JSON serialisation of entity state\n\
-     \x20   operation  TEXT NOT NULL,   -- insert, update, rollback\n\
+     \x20   operation  TEXT NOT NULL CHECK (operation IN ('insert','update','rollback')),\n\
      \x20   PRIMARY KEY (entity_id, table_name, version),\n\
      \x20   CHECK (valid_to IS NULL OR valid_to >= valid_from)\n\
      );\n\
-     CREATE UNIQUE INDEX IF NOT EXISTS idx_temporal_current ON verisimdb_temporal_versions(entity_id, table_name) WHERE valid_to IS NULL;\n\n"
+     CREATE UNIQUE INDEX IF NOT EXISTS ux_temporal_current\n\
+     \x20   ON verisimdb_temporal_versions(entity_id, table_name)\n\
+     \x20   WHERE valid_to IS NULL;\n\n"
         .to_string()
 }
 
@@ -210,17 +286,18 @@ fn generate_temporal_table() -> String {
 /// evaluated at query time to filter and redact data based on the
 /// requesting principal's identity and roles.
 fn generate_access_policy_table() -> String {
-    "-- Access Control: row/column-level access policies\n\
+    "-- Access Control: row/column-level access policies.\n\
+     -- V-L2-J1: access_level is a closed set.\n\
      CREATE TABLE IF NOT EXISTS verisimdb_access_policies (\n\
      \x20   policy_id     TEXT PRIMARY KEY,\n\
      \x20   target_table  TEXT NOT NULL,\n\
      \x20   target_column TEXT,            -- NULL means whole-row policy\n\
      \x20   principal     TEXT NOT NULL,   -- user, role, or group identifier\n\
-     \x20   access_level  TEXT NOT NULL,   -- read, write, admin, deny\n\
-     \x20   condition     TEXT,            -- SQL-like filter condition\n\
+     \x20   access_level  TEXT NOT NULL\n\
+     \x20       CHECK (access_level IN ('read','write','admin','deny')),\n\
+     \x20   condition     TEXT,            -- SQL-like filter condition (V-L1-H1)\n\
      \x20   created_at    TEXT NOT NULL,   -- ISO 8601\n\
-     \x20   active        INTEGER NOT NULL DEFAULT 1,\n\
-     \x20   CHECK (access_level IN ('read','write','admin','deny'))\n\
+     \x20   active        INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1))\n\
      );\n\
      CREATE INDEX IF NOT EXISTS idx_access_table ON verisimdb_access_policies(target_table);\n\
      CREATE INDEX IF NOT EXISTS idx_access_principal ON verisimdb_access_policies(principal);\n\n"
@@ -232,7 +309,9 @@ fn generate_access_policy_table() -> String {
 /// Stores branched copies of data for what-if analysis. Each branch
 /// is isolated from the main data until explicitly merged.
 fn generate_simulation_table() -> String {
-    "-- Simulation: what-if branching and sandbox queries\n\
+    "-- Simulation: what-if branching and sandbox queries.\n\
+     -- V-L2-J1: status is a closed set; parent_branch is a self-FK\n\
+     -- (was previously declared but un-enforced).\n\
      CREATE TABLE IF NOT EXISTS verisimdb_simulation_branches (\n\
      \x20   branch_id    TEXT PRIMARY KEY,\n\
      \x20   parent_branch TEXT REFERENCES verisimdb_simulation_branches(branch_id),  -- NULL for root\n\
@@ -240,15 +319,16 @@ fn generate_simulation_table() -> String {
      \x20   description  TEXT,\n\
      \x20   created_at   TEXT NOT NULL,   -- ISO 8601\n\
      \x20   merged_at    TEXT,            -- ISO 8601, NULL if not merged\n\
-     \x20   status       TEXT NOT NULL DEFAULT 'active',  -- active, merged, abandoned\n\
-     \x20   CHECK (status IN ('active','merged','abandoned'))\n\
+     \x20   status       TEXT NOT NULL DEFAULT 'active'\n\
+     \x20       CHECK (status IN ('active','merged','abandoned'))\n\
      );\n\n\
      CREATE TABLE IF NOT EXISTS verisimdb_simulation_deltas (\n\
      \x20   delta_id    TEXT PRIMARY KEY,\n\
      \x20   branch_id   TEXT NOT NULL REFERENCES verisimdb_simulation_branches(branch_id),\n\
      \x20   entity_id   TEXT NOT NULL,\n\
      \x20   table_name  TEXT NOT NULL,\n\
-     \x20   operation   TEXT NOT NULL,    -- insert, update, delete\n\
+     \x20   operation   TEXT NOT NULL\n\
+     \x20       CHECK (operation IN ('insert','update','delete')),  -- V-L2-J1\n\
      \x20   delta_data  TEXT NOT NULL,    -- JSON of the change\n\
      \x20   created_at  TEXT NOT NULL     -- ISO 8601\n\
      );\n\
@@ -370,10 +450,13 @@ mod tests {
         let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
         assert!(ddl.contains("verisimdb_temporal_versions"));
         assert!(
-            ddl.contains(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_temporal_current ON verisimdb_temporal_versions(entity_id, table_name) WHERE valid_to IS NULL"
-            ),
+            ddl.contains("CREATE UNIQUE INDEX IF NOT EXISTS ux_temporal_current"),
             "temporal current-version index must be UNIQUE"
+        );
+        assert!(
+            ddl.contains("ON verisimdb_temporal_versions(entity_id, table_name)")
+                && ddl.contains("WHERE valid_to IS NULL"),
+            "temporal current-version index must be partial on valid_to IS NULL"
         );
         assert!(
             ddl.contains("CHECK (valid_to IS NULL OR valid_to >= valid_from)"),
@@ -399,7 +482,9 @@ mod tests {
         assert!(ddl.contains("verisimdb_lineage_graph"));
         // The exact CHECK clause must be present in the emitted DDL.
         assert!(
-            ddl.contains("CHECK (source_entity <> target_entity OR source_table <> target_table)"),
+            ddl.contains(
+                "CHECK (NOT (source_entity = target_entity AND source_table = target_table))"
+            ),
             "lineage table is missing the self-reference CHECK constraint"
         );
     }
@@ -447,6 +532,24 @@ mod tests {
         assert!(ddl.contains("actor"));
     }
 
+    /// V-L2-L2: forks are forbidden by a UNIQUE INDEX on
+    /// (entity_id, previous_hash).
+    #[test]
+    fn test_provenance_table_has_unique_chain_index() {
+        let ddl = generate_provenance_table();
+        assert!(ddl.contains("UNIQUE INDEX"));
+        assert!(ddl.contains("ux_provenance_chain"));
+        assert!(ddl.contains("(entity_id, previous_hash)"));
+    }
+
+    /// V-L2-L1: chain_head table exists for per-entity write serialisation.
+    #[test]
+    fn test_provenance_table_has_chain_head() {
+        let ddl = generate_provenance_table();
+        assert!(ddl.contains("verisimdb_provenance_chain_head"));
+        assert!(ddl.contains("head_hash"));
+    }
+
     #[test]
     fn test_temporal_table_has_versioning() {
         let ddl = generate_temporal_table();
@@ -454,5 +557,89 @@ mod tests {
         assert!(ddl.contains("valid_from"));
         assert!(ddl.contains("valid_to"));
         assert!(ddl.contains("snapshot"));
+    }
+
+    /// V-L2-H1: the partial UNIQUE INDEX enforces exactly-one-current.
+    #[test]
+    fn test_temporal_table_has_partial_unique_index() {
+        let ddl = generate_temporal_table();
+        assert!(ddl.contains("UNIQUE INDEX"));
+        assert!(ddl.contains("ux_temporal_current"));
+        assert!(ddl.contains("WHERE valid_to IS NULL"));
+    }
+
+    /// V-L2-H2: valid_to must not predate valid_from.
+    #[test]
+    fn test_temporal_table_has_valid_to_check() {
+        let ddl = generate_temporal_table();
+        assert!(ddl.contains("valid_to IS NULL OR valid_to >= valid_from"));
+    }
+
+    /// V-L2-I1: lineage self-edges are forbidden by CHECK.
+    #[test]
+    fn test_lineage_table_forbids_self_edges() {
+        let ddl = generate_lineage_table();
+        assert!(ddl.contains("NOT (source_entity = target_entity"));
+    }
+
+    /// V-L2-J1: simulation status is a closed set; parent_branch FK exists.
+    #[test]
+    fn test_simulation_table_constraints() {
+        let ddl = generate_simulation_table();
+        assert!(ddl.contains("REFERENCES verisimdb_simulation_branches(branch_id)"));
+        assert!(ddl.contains("status IN ('active','merged','abandoned')"));
+        assert!(ddl.contains("operation IN ('insert','update','delete')"));
+    }
+
+    /// V-L2-J1: provenance, lineage, access enum CHECKs.
+    #[test]
+    fn test_enum_checks() {
+        let prov = generate_provenance_table();
+        assert!(prov.contains("operation IN ('insert','update','delete','transform')"));
+
+        let lin = generate_lineage_table();
+        assert!(
+            lin.contains("derivation_type IN ('copy','transform','aggregate','join','filter')")
+        );
+
+        let acc = generate_access_policy_table();
+        assert!(acc.contains("access_level IN ('read','write','admin','deny')"));
+    }
+
+    /// V-L2-G1: identifier validator accepts safe names, rejects everything
+    /// outside `^[A-Za-z_][A-Za-z0-9_]*$`. This is the codegen-side guard
+    /// against SQL injection via table/column names.
+    #[test]
+    fn test_validate_identifier_accepts_safe() {
+        for ok in &["posts", "Posts", "_x", "x_1", "Post_2026"] {
+            assert!(
+                validate_identifier(ok).is_ok(),
+                "{:?} should be accepted",
+                ok
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_identifier_rejects_unsafe() {
+        let attacks = [
+            "",                         // empty
+            "1posts",                   // leading digit
+            "po sts",                   // space
+            "posts;",                   // statement terminator
+            "posts'); DROP TABLE x;--", // classic injection
+            "posts\"",                  // quote
+            "posts`",                   // backtick
+            "posts/*",                  // comment open
+            "schema.table",             // dotted
+            "ünicode",                  // non-ASCII
+        ];
+        for attack in &attacks {
+            assert!(
+                validate_identifier(attack).is_err(),
+                "{:?} should be rejected",
+                attack
+            );
+        }
     }
 }

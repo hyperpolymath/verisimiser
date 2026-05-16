@@ -16,7 +16,7 @@
 // NULL` row hanging around.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, TransactionBehavior};
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 // =========================================================================
@@ -97,14 +97,13 @@ pub fn append_version(
 ) -> rusqlite::Result<u64> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-    let prev_version: i64 = tx
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) \
+    let prev_version: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(version), 0) \
              FROM verisimdb_temporal_versions \
              WHERE entity_id = ?1 AND table_name = ?2",
-            params![entity_id, table_name],
-            |row| row.get(0),
-        )?;
+        params![entity_id, table_name],
+        |row| row.get(0),
+    )?;
     let next_version = prev_version + 1;
 
     let now = Utc::now();
@@ -258,8 +257,7 @@ mod tests {
     #[test]
     fn genesis_append_starts_at_version_one() {
         let mut conn = open_sidecar();
-        let v = append_version(&mut conn, "e1", "users", "{\"name\":\"Alice\"}", "insert")
-            .unwrap();
+        let v = append_version(&mut conn, "e1", "users", "{\"name\":\"Alice\"}", "insert").unwrap();
         assert_eq!(v, 1);
     }
 
@@ -342,7 +340,10 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         append_version(&mut conn, "e1", "users", "{\"v\":1}", "insert").unwrap();
         let snap = read_at(&conn, "e1", "users", &before).unwrap();
-        assert!(snap.is_none(), "no version exists at a time before any insert");
+        assert!(
+            snap.is_none(),
+            "no version exists at a time before any insert"
+        );
     }
 
     #[test]

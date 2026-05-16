@@ -13,8 +13,8 @@
 // V-L1-C1 (#46): sqlite3_update_hook + sidecar provenance writer.
 
 use crate::tier1::provenance::append_provenance;
-use rusqlite::hooks::Action;
 use rusqlite::Connection;
+use rusqlite::hooks::Action;
 use std::sync::{Arc, Mutex};
 
 /// Type alias for a per-call entity-id resolver. Given `(table, rowid)`
@@ -71,33 +71,27 @@ impl SqliteInterceptor {
         let sidecar = Arc::clone(&self.sidecar);
         let actor = self.actor.clone();
         let resolver = Arc::clone(&self.resolver);
-        target.update_hook(Some(move |action: Action, _db: &str, table: &str, rowid: i64| {
-            let op = match action {
-                Action::SQLITE_INSERT => "insert",
-                Action::SQLITE_UPDATE => "update",
-                Action::SQLITE_DELETE => "delete",
-                _ => return, // unknown action — skip
-            };
-            let entity_id = resolver(table, rowid);
+        target.update_hook(Some(
+            move |action: Action, _db: &str, table: &str, rowid: i64| {
+                let op = match action {
+                    Action::SQLITE_INSERT => "insert",
+                    Action::SQLITE_UPDATE => "update",
+                    Action::SQLITE_DELETE => "delete",
+                    _ => return, // unknown action — skip
+                };
+                let entity_id = resolver(table, rowid);
 
-            // Lock the sidecar and append. We swallow errors here
-            // because the hook is invoked from inside SQLite's
-            // transaction machinery — a panic could destabilise the
-            // target connection. Errors are observable later via
-            // `verify_chain` returning Ok(false) or by inspecting
-            // the sidecar log.
-            if let Ok(mut conn) = sidecar.lock() {
-                let _ = append_provenance(
-                    &mut conn,
-                    &entity_id,
-                    table,
-                    op,
-                    &actor,
-                    None,
-                    None,
-                );
-            }
-        }));
+                // Lock the sidecar and append. We swallow errors here
+                // because the hook is invoked from inside SQLite's
+                // transaction machinery — a panic could destabilise the
+                // target connection. Errors are observable later via
+                // `verify_chain` returning Ok(false) or by inspecting
+                // the sidecar log.
+                if let Ok(mut conn) = sidecar.lock() {
+                    let _ = append_provenance(&mut conn, &entity_id, table, op, &actor, None, None);
+                }
+            },
+        ));
     }
 
     /// Borrow the sidecar connection for read-only queries (e.g.
@@ -174,7 +168,10 @@ mod tests {
             )
             .unwrap();
         target
-            .execute("UPDATE users SET name = ?1 WHERE id = ?2", params!["Alicia", 1i64])
+            .execute(
+                "UPDATE users SET name = ?1 WHERE id = ?2",
+                params!["Alicia", 1i64],
+            )
             .unwrap();
         target
             .execute("DELETE FROM users WHERE id = ?1", params![1i64])
@@ -249,14 +246,16 @@ mod tests {
     #[test]
     fn custom_resolver_overrides_rowid_default() {
         let target = fresh_target();
-        let resolver: EntityIdResolver =
-            Arc::new(|table, rowid| format!("{table}#{rowid}"));
-        let interceptor = SqliteInterceptor::new(fresh_sidecar(), "test-actor")
-            .with_resolver(resolver);
+        let resolver: EntityIdResolver = Arc::new(|table, rowid| format!("{table}#{rowid}"));
+        let interceptor =
+            SqliteInterceptor::new(fresh_sidecar(), "test-actor").with_resolver(resolver);
         interceptor.install(&target);
 
         target
-            .execute("INSERT INTO users (id, name) VALUES (?1, ?2)", params![1i64, "Alice"])
+            .execute(
+                "INSERT INTO users (id, name) VALUES (?1, ?2)",
+                params![1i64, "Alice"],
+            )
             .unwrap();
 
         let sidecar = interceptor.sidecar();

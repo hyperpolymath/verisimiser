@@ -89,19 +89,19 @@ mod tests {
             "posts'); DROP TABLE x;--",
             "posts; DROP TABLE x;",
             "posts--",
-            "1posts",       // leading digit
-            "",             // empty
-            "posts table",  // space
-            "posts;",       // semicolon
-            "posts'",       // single quote
-            "posts\"x\"",   // double quote
-            "posts/*x*/",   // comment
-            "posts\nx",     // newline
-            "posts\tx",     // tab
+            "1posts",      // leading digit
+            "",            // empty
+            "posts table", // space
+            "posts;",      // semicolon
+            "posts'",      // single quote
+            "posts\"x\"",  // double quote
+            "posts/*x*/",  // comment
+            "posts\nx",    // newline
+            "posts\tx",    // tab
             "posts UNION SELECT 1",
-            "ünicode",      // non-ASCII
-            "posts.col",    // dot
-            "posts(",       // paren
+            "ünicode",   // non-ASCII
+            "posts.col", // dot
+            "posts(",    // paren
         ];
         for attack in attacks {
             let result = validate_identifier(attack, "table");
