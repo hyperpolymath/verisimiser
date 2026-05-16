@@ -25,6 +25,11 @@ permissions:
   # the rule silently returns no findings.
   # See 007-lang/audits/audit-dependabot-automation-gap-2026-04-17.md.
   security-events: read
+  # pull-requests: write lets the advisory "Comment on PR with findings"
+  # step post its summary. Without it the built-in GITHUB_TOKEN gets
+  # "Resource not accessible by integration" and (absent continue-on-error)
+  # hard-fails the scan — exactly what the gate-decoupling design forbids.
+  pull-requests: write
 
 jobs:
   scan:
@@ -211,6 +216,11 @@ jobs:
 
       - name: Comment on PR with findings
         if: github.event_name == 'pull_request' && steps.scan.outputs.findings_count > 0
+        # Advisory only — posting findings as a PR comment must never gate
+        # the scan (hypatia#213 gate decoupling). Belt-and-braces alongside
+        # the pull-requests: write permission above: a token/API hiccup or
+        # a fork PR (read-only token) skips the comment, not the check.
+        continue-on-error: true
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           script: |
