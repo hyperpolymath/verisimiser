@@ -39,16 +39,30 @@ pub use crate::abi::ProvenanceEntry;
 // SQLite sidecar schema
 // =========================================================================
 
-/// SQL DDL for the provenance sidecar schema.
+/// SQL DDL for the provenance sidecar schema (ADR-0010: provenance forks
+/// are first-class).
 ///
-/// Two tables:
+/// * `verisimdb_provenance_log` — append-only log of every entry. The
+///   `hash` PRIMARY KEY *is* the duplicate guard: the preimage is
+///   domain-tagged and covers every tamper-relevant field (ADR-0002 /
+///   #27), so an exact-duplicate row necessarily collides on `hash`.
+///   We deliberately do **not** add `UNIQUE(entity_id, previous_hash)`
+///   (#32, superseded by ADR-0010): that would reject a *divergent*
+///   second writer's legitimate history at insert time, making a real
+///   fork impossible to record, detect or audit.
+/// * `idx_provenance_predecessor` — **non-unique** index making fork
+///   *detection* O(log n): two children of one predecessor are two
+///   rows sharing `(entity_id, previous_hash)` with distinct `hash`.
+/// * `verisimdb_provenance_chain_heads` — the set of live branch tips
+///   per entity. One row per entity for a linear chain; several rows
+///   when the entity has legitimately forked.
+/// * `verisimdb_provenance_chain_head` — the legacy single-head table,
+///   kept (non-destructively) one release for migration. New writes go
+///   to `_chain_heads`; the `INSERT … SELECT` below copies any legacy
+///   heads forward idempotently (no-op on a fresh sidecar).
 ///
-/// * `verisimdb_provenance_log` — append-only log of every entry.
-///   Mirrors `codegen/overlay.rs::generate_provenance_table` (kept in
-///   sync — see ADR-0008 dialect-split work, #45).
-/// * `verisimdb_provenance_chain_head` — per-entity pointer to the
-///   tip of its chain, used by `append_provenance` to look up the
-///   `previous_hash` in O(1) without scanning the log.
+/// Mirrors `codegen/overlay.rs::generate_provenance_table` (kept in
+/// sync — see ADR-0008 dialect-split work, #45).
 pub const SIDECAR_DDL: &str = "\
     CREATE TABLE IF NOT EXISTS verisimdb_provenance_log (\
         hash          TEXT PRIMARY KEY,\
@@ -64,10 +78,19 @@ pub const SIDECAR_DDL: &str = "\
     );\
     CREATE INDEX IF NOT EXISTS idx_provenance_entity ON verisimdb_provenance_log(entity_id);\
     CREATE INDEX IF NOT EXISTS idx_provenance_table  ON verisimdb_provenance_log(table_name);\
+    CREATE INDEX IF NOT EXISTS idx_provenance_predecessor \
+        ON verisimdb_provenance_log(entity_id, previous_hash);\
     CREATE TABLE IF NOT EXISTS verisimdb_provenance_chain_head (\
         entity_id TEXT PRIMARY KEY,\
         head_hash TEXT NOT NULL\
-    );";
+    );\
+    CREATE TABLE IF NOT EXISTS verisimdb_provenance_chain_heads (\
+        entity_id TEXT NOT NULL,\
+        head_hash TEXT NOT NULL,\
+        PRIMARY KEY (entity_id, head_hash)\
+    );\
+    INSERT OR IGNORE INTO verisimdb_provenance_chain_heads (entity_id, head_hash) \
+        SELECT entity_id, head_hash FROM verisimdb_provenance_chain_head;";
 
 /// Create the provenance sidecar tables in `conn` if they don't already
 /// exist. Idempotent — safe to call on every open of an existing
@@ -99,16 +122,26 @@ pub fn append_provenance(
     actor: &str,
     before_snapshot: Option<&str>,
     transformation: Option<&str>,
-) -> rusqlite::Result<String> {
+) -> anyhow::Result<String> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-    let prev_hash: String = tx
-        .query_row(
-            "SELECT head_hash FROM verisimdb_provenance_chain_head WHERE entity_id = ?1",
-            [entity_id],
-            |row| row.get(0),
-        )
-        .unwrap_or_default();
+    // Linear fast-path: the parent is the entity's *unique* current
+    // head. Zero heads ⇒ genesis (prev = ""). More than one head ⇒ the
+    // entity has legitimately forked and there is no single tip to
+    // extend; the caller must choose a branch via `append_provenance_fork`
+    // (ADR-0010 §2).
+    let heads = head_set(&tx, entity_id)?;
+    let prev_hash: String = match heads.len() {
+        0 => String::new(),
+        1 => heads[0].clone(),
+        n => {
+            return Err(anyhow::anyhow!(format!(
+                "entity {entity_id:?} has {n} chain heads (forked); linear \
+                 append is ambiguous — use append_provenance_fork(from_hash) \
+                 to extend a specific branch (ADR-0010)"
+            )));
+        }
+    };
 
     let timestamp = Utc::now();
     let hash = ProvenanceEntry::compute_hash(
@@ -121,14 +154,179 @@ pub fn append_provenance(
         transformation,
     );
 
-    tx.execute(
+    insert_log_row(
+        &tx,
+        &hash,
+        &prev_hash,
+        entity_id,
+        table_name,
+        operation,
+        actor,
+        &timestamp,
+        before_snapshot,
+        transformation,
+    )?;
+
+    // Linear advance: drop the consumed parent tip, add the new tip, so
+    // a normal append keeps exactly one head.
+    if !prev_hash.is_empty() {
+        tx.execute(
+            "DELETE FROM verisimdb_provenance_chain_heads \
+             WHERE entity_id = ?1 AND head_hash = ?2",
+            params![entity_id, prev_hash],
+        )?;
+    }
+    add_head(&tx, entity_id, &hash)?;
+
+    tx.commit()?;
+    Ok(hash)
+}
+
+/// Extend the chain of `entity_id` from a *specific ancestor* `from_hash`
+/// rather than the current tip — i.e. deliberately record a fork (ADR-0010
+/// §2). This is honest divergent history (partitioned/replicated/offline
+/// writers, simulation branches), not tampering.
+///
+/// Unlike [`append_provenance`], this *adds* a head without removing one:
+/// the entity gains a new branch tip and now has ≥2 heads. `from_hash`
+/// must be an existing entry in this entity's log.
+#[allow(clippy::too_many_arguments)]
+pub fn append_provenance_fork(
+    conn: &mut Connection,
+    entity_id: &str,
+    table_name: &str,
+    operation: &str,
+    actor: &str,
+    before_snapshot: Option<&str>,
+    transformation: Option<&str>,
+    from_hash: &str,
+) -> anyhow::Result<String> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+    let ancestor_exists: bool = tx
+        .query_row(
+            "SELECT 1 FROM verisimdb_provenance_log \
+             WHERE entity_id = ?1 AND hash = ?2",
+            params![entity_id, from_hash],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if !ancestor_exists {
+        return Err(anyhow::anyhow!(format!(
+            "from_hash {from_hash:?} is not an entry in entity {entity_id:?}'s \
+             chain; cannot fork from a non-existent ancestor"
+        )));
+    }
+
+    let timestamp = Utc::now();
+    let hash = ProvenanceEntry::compute_hash(
+        from_hash,
+        entity_id,
+        operation,
+        actor,
+        &timestamp,
+        before_snapshot,
+        transformation,
+    );
+
+    insert_log_row(
+        &tx,
+        &hash,
+        from_hash,
+        entity_id,
+        table_name,
+        operation,
+        actor,
+        &timestamp,
+        before_snapshot,
+        transformation,
+    )?;
+
+    // A fork *adds* a tip and removes none: the entity now has ≥2 heads.
+    add_head(&tx, entity_id, &hash)?;
+
+    tx.commit()?;
+    Ok(hash)
+}
+
+/// A predecessor in `entity_id`'s log that has more than one child —
+/// i.e. the point at which the history diverged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForkPoint {
+    /// Hash of the shared predecessor entry (or `""` for a forked genesis).
+    pub predecessor: String,
+    /// How many distinct children chain directly from it (always ≥ 2).
+    pub children: u64,
+}
+
+/// Every fork point in `entity_id`'s history. Empty ⇒ the chain is
+/// linear. O(log n) via `idx_provenance_predecessor` (ADR-0010 §1/§3).
+pub fn fork_points(conn: &Connection, entity_id: &str) -> rusqlite::Result<Vec<ForkPoint>> {
+    let mut stmt = conn.prepare(
+        "SELECT previous_hash, COUNT(*) AS c \
+         FROM verisimdb_provenance_log \
+         WHERE entity_id = ?1 \
+         GROUP BY previous_hash HAVING c > 1 \
+         ORDER BY previous_hash",
+    )?;
+    let rows = stmt.query_map([entity_id], |row| {
+        Ok(ForkPoint {
+            predecessor: row.get::<_, String>(0)?,
+            children: row.get::<_, i64>(1)? as u64,
+        })
+    })?;
+    rows.collect()
+}
+
+// --- internal helpers -----------------------------------------------------
+
+/// The current set of branch-tip hashes for `entity_id`.
+fn head_set(conn: &Connection, entity_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id = ?1",
+    )?;
+    let rows = stmt.query_map([entity_id], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
+/// Add `hash` to the entity's head set (idempotent). Also best-effort
+/// updates the legacy single-head table so a one-release-old reader
+/// still sees *a* head (it cannot represent the fork, but stays valid).
+fn add_head(conn: &Connection, entity_id: &str, hash: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO verisimdb_provenance_chain_heads (entity_id, head_hash) \
+         VALUES (?1, ?2)",
+        params![entity_id, hash],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO verisimdb_provenance_chain_head (entity_id, head_hash) \
+         VALUES (?1, ?2)",
+        params![entity_id, hash],
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_log_row(
+    conn: &Connection,
+    hash: &str,
+    previous_hash: &str,
+    entity_id: &str,
+    table_name: &str,
+    operation: &str,
+    actor: &str,
+    timestamp: &DateTime<Utc>,
+    before_snapshot: Option<&str>,
+    transformation: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
         "INSERT INTO verisimdb_provenance_log \
          (hash, previous_hash, entity_id, table_name, operation, actor, timestamp, \
           before_snapshot, transformation) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             hash,
-            prev_hash,
+            previous_hash,
             entity_id,
             table_name,
             operation,
@@ -138,85 +336,104 @@ pub fn append_provenance(
             transformation,
         ],
     )?;
-
-    tx.execute(
-        "INSERT OR REPLACE INTO verisimdb_provenance_chain_head (entity_id, head_hash) \
-         VALUES (?1, ?2)",
-        params![entity_id, hash],
-    )?;
-
-    tx.commit()?;
-    Ok(hash)
+    Ok(())
 }
 
-/// Verify that the chain for `entity_id` is internally consistent.
+/// Verify that every branch of `entity_id`'s chain is internally
+/// hash-consistent (ADR-0010 §3).
 ///
-/// Walks the log in timestamp order; for each entry, recomputes the
-/// hash from its stored fields and checks (a) the recomputed hash
-/// matches the stored hash, (b) the `previous_hash` field matches the
-/// hash of the prior entry in the walk (or `""` for genesis).
+/// A forked entity is **not** a tampered one: linearity is not the
+/// integrity property — tamper-evidence and no-silent-loss are. So
+/// rather than assume a single linear walk, this builds the entity's
+/// `hash → entry` map, identifies every branch tip (a hash that is no
+/// row's `previous_hash`, unioned with the recorded head set), and
+/// walks each tip back to a genesis (`previous_hash == ""`). Each node
+/// on every branch must (a) recompute to its stored `hash`, and (b)
+/// chain to a present predecessor (or genesis). Shared prefixes are
+/// re-checked; correctness over micro-optimisation.
 ///
-/// Returns `Ok(true)` iff the entire chain verifies; `Ok(false)` on the
-/// first mismatch. Any SQL error propagates.
+/// Returns `Ok(true)` iff *all* branches verify; `Ok(false)` on the
+/// first inconsistency. An empty entity verifies vacuously.
 pub fn verify_chain(conn: &Connection, entity_id: &str) -> rusqlite::Result<bool> {
-    let mut stmt = conn.prepare(
-        "SELECT hash, previous_hash, entity_id, operation, actor, timestamp, \
-                before_snapshot, transformation \
-         FROM verisimdb_provenance_log \
-         WHERE entity_id = ?1 \
-         ORDER BY timestamp ASC, hash ASC",
-    )?;
+    use std::collections::{HashMap, HashSet};
 
-    let rows = stmt.query_map([entity_id], |row| {
+    struct Node {
+        previous_hash: String,
+        operation: String,
+        actor: String,
+        ts_str: String,
+        before_snapshot: Option<String>,
+        transformation: Option<String>,
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT hash, previous_hash, operation, actor, timestamp, \
+                before_snapshot, transformation \
+         FROM verisimdb_provenance_log WHERE entity_id = ?1",
+    )?;
+    let mut nodes: HashMap<String, Node> = HashMap::new();
+    let mut has_child: HashSet<String> = HashSet::new();
+    let iter = stmt.query_map([entity_id], |row| {
         Ok((
             row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, Option<String>>(6)?,
-            row.get::<_, Option<String>>(7)?,
+            Node {
+                previous_hash: row.get::<_, String>(1)?,
+                operation: row.get::<_, String>(2)?,
+                actor: row.get::<_, String>(3)?,
+                ts_str: row.get::<_, String>(4)?,
+                before_snapshot: row.get::<_, Option<String>>(5)?,
+                transformation: row.get::<_, Option<String>>(6)?,
+            },
         ))
     })?;
-
-    let mut expected_prev = String::new();
-    for row in rows {
-        let (
-            stored_hash,
-            stored_prev,
-            entity_id,
-            operation,
-            actor,
-            ts_str,
-            before_snapshot,
-            transformation,
-        ) = row?;
-
-        if stored_prev != expected_prev {
-            return Ok(false);
+    for r in iter {
+        let (hash, node) = r?;
+        if !node.previous_hash.is_empty() {
+            has_child.insert(node.previous_hash.clone());
         }
+        nodes.insert(hash, node);
+    }
+    if nodes.is_empty() {
+        return Ok(true); // vacuous
+    }
 
-        let timestamp = match DateTime::parse_from_rfc3339(&ts_str) {
-            Ok(t) => t.with_timezone(&Utc),
-            Err(_) => return Ok(false),
-        };
-
-        let recomputed = ProvenanceEntry::compute_hash(
-            &stored_prev,
-            &entity_id,
-            &operation,
-            &actor,
-            &timestamp,
-            before_snapshot.as_deref(),
-            transformation.as_deref(),
-        );
-
-        if recomputed != stored_hash {
-            return Ok(false);
+    // Tips = recorded heads ∪ any hash nothing chains from.
+    let mut tips: HashSet<String> = head_set(conn, entity_id)?.into_iter().collect();
+    for h in nodes.keys() {
+        if !has_child.contains(h) {
+            tips.insert(h.clone());
         }
+    }
 
-        expected_prev = stored_hash;
+    for tip in tips {
+        let mut cursor = tip;
+        loop {
+            let Some(node) = nodes.get(&cursor) else {
+                // A tip recorded in the head set with no log row, or a
+                // dangling previous_hash: broken chain.
+                return Ok(false);
+            };
+            let timestamp = match DateTime::parse_from_rfc3339(&node.ts_str) {
+                Ok(t) => t.with_timezone(&Utc),
+                Err(_) => return Ok(false),
+            };
+            let recomputed = ProvenanceEntry::compute_hash(
+                &node.previous_hash,
+                entity_id,
+                &node.operation,
+                &node.actor,
+                &timestamp,
+                node.before_snapshot.as_deref(),
+                node.transformation.as_deref(),
+            );
+            if recomputed != cursor {
+                return Ok(false);
+            }
+            if node.previous_hash.is_empty() {
+                break; // reached genesis: this branch is consistent
+            }
+            cursor = node.previous_hash.clone();
+        }
     }
 
     Ok(true)
@@ -249,7 +466,9 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 2, "expected 2 provenance tables");
+        // log + legacy single-head + multi-head set (ADR-0010 keeps the
+        // legacy table one release for non-destructive migration).
+        assert_eq!(count, 3, "expected 3 provenance tables");
     }
 
     #[test]
@@ -268,14 +487,14 @@ mod tests {
             .unwrap();
         assert_eq!(prev, "", "genesis must chain from empty previous_hash");
 
-        let head: String = conn
-            .query_row(
-                "SELECT head_hash FROM verisimdb_provenance_chain_head WHERE entity_id='e1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(head, hash, "chain head must point at the new entry");
+        let heads: Vec<String> = {
+            let mut s = conn
+                .prepare("SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id='e1'")
+                .unwrap();
+            let r = s.query_map([], |x| x.get::<_, String>(0)).unwrap();
+            r.collect::<Result<_, _>>().unwrap()
+        };
+        assert_eq!(heads, vec![hash], "genesis must record exactly one head");
     }
 
     #[test]
@@ -297,14 +516,18 @@ mod tests {
         assert_ne!(h1, h2);
         assert_ne!(h2, h3);
 
-        let head: String = conn
-            .query_row(
-                "SELECT head_hash FROM verisimdb_provenance_chain_head WHERE entity_id='e1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(head, h3);
+        let heads: Vec<String> = {
+            let mut s = conn
+                .prepare("SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id='e1'")
+                .unwrap();
+            let r = s.query_map([], |x| x.get::<_, String>(0)).unwrap();
+            r.collect::<Result<_, _>>().unwrap()
+        };
+        assert_eq!(
+            heads,
+            vec![h3.clone()],
+            "a linear chain advances its single head, never accumulates tips"
+        );
 
         assert!(
             verify_chain(&conn, "e1").unwrap(),
