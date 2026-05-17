@@ -12,9 +12,6 @@ concurrency:
   group: rust-ci-${{ github.ref }}
   cancel-in-progress: true
 
-concurrency:
-  group: rust-ci-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
