@@ -170,10 +170,16 @@ fn main() -> Result<()> {
             // Create output directory.
             std::fs::create_dir_all(&output)?;
 
+            // The sidecar DDL dialect follows [sidecar].storage. This
+            // rejects `json` (tracked by #112) instead of silently
+            // emitting SQLite DDL for a non-SQLite store (V-L2-F1).
+            let dialect = codegen::overlay::SqlDialect::from_storage(&m.sidecar.storage)?;
+
             // Generate sidecar overlay schema. Errors here surface invalid
             // table/column identifiers in the parsed schema before they
             // reach disk.
-            let overlay_ddl = codegen::overlay::generate_sidecar_schema(&schema, &m.octad)?;
+            let overlay_ddl =
+                codegen::overlay::generate_sidecar_schema(&schema, &m.octad, dialect)?;
             let overlay_path = format!("{}/sidecar_schema.sql", output);
             std::fs::write(&overlay_path, &overlay_ddl)?;
             println!("Generated sidecar schema: {}", overlay_path);
