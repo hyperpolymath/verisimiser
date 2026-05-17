@@ -7,14 +7,21 @@
 // of tables and columns. This IR is then consumed by the overlay and query
 // generators to produce sidecar schemas and query interceptors.
 //
-// Supported dialects: PostgreSQL, SQLite. MongoDB schemas are inferred from
-// sample documents rather than DDL.
+// Backed by the `sqlparser` crate (V-L2-A1, #38): the previous hand-rolled
+// uppercase-and-split scanner misclassified CHECK constraints,
+// schema-qualified names, GENERATED columns, quoted identifiers containing
+// whitespace, and any DDL with semicolons inside comments. We try the
+// PostgreSQL dialect first, then SQLite, then a permissive generic dialect,
+// and walk `Statement::CreateTable` into the stable IR below.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sqlparser::ast::{ColumnOption, Statement, TableConstraint};
+use sqlparser::dialect::{Dialect, GenericDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::parser::Parser;
 
 // ---------------------------------------------------------------------------
-// Schema IR (intermediate representation)
+// Schema IR (intermediate representation) — unchanged public shape
 // ---------------------------------------------------------------------------
 
 /// A parsed database schema containing all discovered tables.
@@ -29,7 +36,9 @@ pub struct ParsedSchema {
 /// A single table definition extracted from DDL.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableDef {
-    /// Table name as declared in the DDL.
+    /// Table name as declared in the DDL. For schema-qualified names
+    /// (`schema.table`) this is the bare table identifier, with the
+    /// quoting stripped (e.g. `"my table"` → `my table`).
     pub name: String,
     /// Columns belonging to this table, in declaration order.
     pub columns: Vec<ColumnDef>,
@@ -38,13 +47,16 @@ pub struct TableDef {
 /// A single column definition within a table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnDef {
-    /// Column name as declared in the DDL.
+    /// Column name as declared in the DDL (quoting stripped).
     pub name: String,
-    /// SQL type as a string (e.g., "INTEGER", "TEXT", "VARCHAR(255)").
+    /// SQL type rendered canonically by `sqlparser` (e.g. `INTEGER`,
+    /// `TEXT`, `VARCHAR(255)`, `NUMERIC(10,2)`).
     pub sql_type: String,
-    /// Whether this column is part of the primary key.
+    /// Whether this column is part of the primary key (column-level
+    /// `PRIMARY KEY` or a table-level `PRIMARY KEY (..)` listing it).
     pub is_primary_key: bool,
-    /// Whether this column has a NOT NULL constraint.
+    /// Whether this column has a NOT NULL constraint (primary-key
+    /// columns are implicitly NOT NULL).
     pub is_not_null: bool,
 }
 
@@ -52,60 +64,102 @@ pub struct ColumnDef {
 // Parser implementation
 // ---------------------------------------------------------------------------
 
-/// Parse a SQL DDL string into a `ParsedSchema`.
-///
-/// This is a lightweight parser that handles common CREATE TABLE patterns.
-/// It does not aim to be a full SQL parser — just enough to extract table
-/// names, column names, types, and primary key designations for overlay
-/// generation.
-///
-/// # Supported patterns
-/// - `CREATE TABLE name (columns...);`
-/// - `CREATE TABLE IF NOT EXISTS name (columns...);`
-/// - Column-level PRIMARY KEY and NOT NULL constraints
-/// - Inline `PRIMARY KEY (col1, col2)` table constraints
-///
-/// # Limitations
-/// - Does not parse CHECK, UNIQUE, FOREIGN KEY, or DEFAULT constraints
-/// - Does not handle quoted identifiers with special characters
-/// - Does not parse ALTER TABLE or CREATE INDEX statements
-pub fn parse_sql_schema(ddl: &str) -> Result<ParsedSchema> {
-    let mut tables = Vec::new();
+/// Parse SQL DDL with the first dialect that accepts it: PostgreSQL, then
+/// SQLite, then a permissive generic dialect (covers `SERIAL`,
+/// `AUTOINCREMENT`, generated columns, and dialect-specific types).
+fn parse_statements(ddl: &str) -> Result<Vec<Statement>> {
+    let pg = PostgreSqlDialect {};
+    let sqlite = SQLiteDialect {};
+    let generic = GenericDialect {};
+    let dialects: [&dyn Dialect; 3] = [&pg, &sqlite, &generic];
 
-    // Normalise whitespace for easier matching: collapse runs of whitespace
-    // (including newlines) into single spaces.
-    let normalised = ddl
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            // Strip single-line SQL comments.
-            if let Some(pos) = trimmed.find("--") {
-                &trimmed[..pos]
-            } else {
-                trimmed
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    // Split on semicolons to get individual statements.
-    for statement in normalised.split(';') {
-        let stmt = statement.trim();
-        if stmt.is_empty() {
-            continue;
-        }
-
-        // Match CREATE TABLE statements (case-insensitive).
-        let upper = stmt.to_uppercase();
-        if !upper.starts_with("CREATE TABLE") {
-            continue;
-        }
-
-        if let Some(table) = parse_create_table(stmt)? {
-            tables.push(table);
+    let mut last_err = None;
+    for dialect in dialects {
+        match Parser::parse_sql(dialect, ddl) {
+            Ok(statements) => return Ok(statements),
+            Err(e) => last_err = Some(e),
         }
     }
+    Err(anyhow::anyhow!(
+        "failed to parse SQL DDL with the PostgreSQL, SQLite, or generic \
+         dialects: {}",
+        last_err.expect("at least one dialect is always attempted")
+    ))
+}
 
+/// Walk a parsed `CREATE TABLE` into the `TableDef` IR.
+fn table_from_create(ct: sqlparser::ast::CreateTable) -> TableDef {
+    // Schema-qualified names: the table is the last identifier segment.
+    let name = ct
+        .name
+        .0
+        .last()
+        .map(|ident| ident.value.clone())
+        .unwrap_or_default();
+
+    // Table-level PRIMARY KEY (col, ...) — collect the named columns.
+    let mut table_pk: Vec<String> = Vec::new();
+    for constraint in &ct.constraints {
+        if let TableConstraint::PrimaryKey { columns, .. } = constraint {
+            for col in columns {
+                table_pk.push(col.value.to_lowercase());
+            }
+        }
+        // FOREIGN KEY / UNIQUE / CHECK table constraints carry no column
+        // IR of their own — intentionally ignored, not mis-parsed.
+    }
+
+    let mut columns = Vec::new();
+    for col in ct.columns {
+        let col_name = col.name.value.clone();
+        let sql_type = col.data_type.to_string();
+
+        let mut is_primary_key = false;
+        let mut is_not_null = false;
+        for opt in &col.options {
+            match &opt.option {
+                // Column-level PRIMARY KEY is a unique option flagged primary.
+                ColumnOption::Unique { is_primary, .. } if *is_primary => {
+                    is_primary_key = true;
+                }
+                ColumnOption::NotNull => is_not_null = true,
+                // CHECK / DEFAULT / GENERATED / REFERENCES etc. do not
+                // affect the (name, type, pk, not-null) IR.
+                _ => {}
+            }
+        }
+
+        if table_pk.contains(&col_name.to_lowercase()) {
+            is_primary_key = true;
+        }
+        if is_primary_key {
+            is_not_null = true;
+        }
+
+        columns.push(ColumnDef {
+            name: col_name,
+            sql_type,
+            is_primary_key,
+            is_not_null,
+        });
+    }
+
+    TableDef { name, columns }
+}
+
+/// Parse a SQL DDL string into a `ParsedSchema`.
+///
+/// Only `CREATE TABLE` statements contribute to the IR; other statements
+/// (CREATE INDEX, ALTER TABLE, comments) are parsed for correctness but
+/// produce no tables.
+pub fn parse_sql_schema(ddl: &str) -> Result<ParsedSchema> {
+    let statements = parse_statements(ddl)?;
+    let mut tables = Vec::new();
+    for stmt in statements {
+        if let Statement::CreateTable(ct) = stmt {
+            tables.push(table_from_create(ct));
+        }
+    }
     Ok(ParsedSchema {
         tables,
         source: None,
@@ -121,198 +175,6 @@ pub fn parse_schema_file(path: &str) -> Result<ParsedSchema> {
     let mut schema = parse_sql_schema(&contents)?;
     schema.source = Some(path.to_string());
     Ok(schema)
-}
-
-/// Parse a single CREATE TABLE statement into a `TableDef`.
-///
-/// Returns `Ok(None)` if the statement cannot be parsed (non-fatal).
-fn parse_create_table(statement: &str) -> Result<Option<TableDef>> {
-    // Extract the table name: everything between "CREATE TABLE [IF NOT EXISTS]" and "(".
-    let upper = statement.to_uppercase();
-
-    // Find where the column list starts.
-    let paren_start = match statement.find('(') {
-        Some(pos) => pos,
-        None => return Ok(None),
-    };
-
-    // Extract the table name portion.
-    let _before_paren = statement[..paren_start].trim();
-    let name_part = if upper.contains("IF NOT EXISTS") {
-        // Skip past "CREATE TABLE IF NOT EXISTS".
-        let idx = upper.find("IF NOT EXISTS")
-            .expect("upper.contains(\"IF NOT EXISTS\") was guarded immediately above, so find() is always Some")
-            + "IF NOT EXISTS".len();
-        statement[idx..paren_start].trim()
-    } else {
-        // Skip past "CREATE TABLE".
-        let idx = upper.find("TABLE")
-            .expect("parse_create_table is only invoked when upper.starts_with(\"CREATE TABLE\") (see parse_sql_schema), so find(\"TABLE\") is always Some")
-            + "TABLE".len();
-        statement[idx..paren_start].trim()
-    };
-
-    let table_name = name_part
-        .trim_matches('"')
-        .trim_matches('`')
-        .trim()
-        .to_string();
-
-    if table_name.is_empty() {
-        return Ok(None);
-    }
-
-    // Extract the column list: everything between the first "(" and the last ")".
-    let paren_end = match statement.rfind(')') {
-        Some(pos) => pos,
-        None => return Ok(None),
-    };
-
-    let column_list_str = &statement[paren_start + 1..paren_end];
-
-    // Track which columns are declared as primary key via table-level constraint.
-    let mut table_pk_columns: Vec<String> = Vec::new();
-    let mut columns: Vec<ColumnDef> = Vec::new();
-
-    // Split on commas, but respect parentheses nesting (e.g., VARCHAR(255)).
-    for part in split_respecting_parens(column_list_str) {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let upper_part = trimmed.to_uppercase();
-
-        // Check for table-level PRIMARY KEY constraint.
-        if upper_part.starts_with("PRIMARY KEY") {
-            if let Some(pk_start) = trimmed.find('(')
-                && let Some(pk_end) = trimmed.rfind(')')
-            {
-                let pk_cols = &trimmed[pk_start + 1..pk_end];
-                for col in pk_cols.split(',') {
-                    table_pk_columns.push(
-                        col.trim()
-                            .trim_matches('"')
-                            .trim_matches('`')
-                            .to_lowercase(),
-                    );
-                }
-            }
-            continue;
-        }
-
-        // Skip other table-level constraints (FOREIGN KEY, UNIQUE, CHECK, CONSTRAINT).
-        if upper_part.starts_with("FOREIGN KEY")
-            || upper_part.starts_with("UNIQUE")
-            || upper_part.starts_with("CHECK")
-            || upper_part.starts_with("CONSTRAINT")
-        {
-            continue;
-        }
-
-        // Parse as a column definition.
-        if let Some(col) = parse_column_def(trimmed) {
-            columns.push(col);
-        }
-    }
-
-    // Apply table-level PRIMARY KEY to matching columns.
-    for col in &mut columns {
-        if table_pk_columns.contains(&col.name.to_lowercase()) {
-            col.is_primary_key = true;
-        }
-    }
-
-    Ok(Some(TableDef {
-        name: table_name,
-        columns,
-    }))
-}
-
-/// Parse a single column definition string into a `ColumnDef`.
-///
-/// Expected format: `column_name TYPE [constraints...]`
-fn parse_column_def(definition: &str) -> Option<ColumnDef> {
-    let tokens: Vec<&str> = definition.split_whitespace().collect();
-    if tokens.len() < 2 {
-        return None;
-    }
-
-    let name = tokens[0].trim_matches('"').trim_matches('`').to_string();
-
-    // The SQL type is the second token (possibly with parenthesised length).
-    // We need to reconstruct it if it was split by whitespace inside parens.
-    let rest = &definition[definition.find(tokens[1]).unwrap_or(0)..];
-    let upper_rest = rest.to_uppercase();
-
-    // Extract the type: take tokens until we hit a constraint keyword.
-    let constraint_keywords = [
-        "PRIMARY",
-        "NOT",
-        "NULL",
-        "DEFAULT",
-        "UNIQUE",
-        "CHECK",
-        "REFERENCES",
-        "AUTOINCREMENT",
-        "AUTO_INCREMENT",
-        "GENERATED",
-        "SERIAL",
-    ];
-    let mut type_parts: Vec<&str> = Vec::new();
-    for token in &tokens[1..] {
-        if constraint_keywords.contains(&token.to_uppercase().as_str()) {
-            break;
-        }
-        type_parts.push(token);
-    }
-    let sql_type = type_parts.join(" ");
-
-    let is_primary_key = upper_rest.contains("PRIMARY KEY");
-    let is_not_null = upper_rest.contains("NOT NULL") || is_primary_key;
-
-    Some(ColumnDef {
-        name,
-        sql_type,
-        is_primary_key,
-        is_not_null,
-    })
-}
-
-/// Split a string on commas while respecting parentheses nesting.
-///
-/// This ensures that `VARCHAR(255)` or `NUMERIC(10, 2)` are not split
-/// at the comma inside the parentheses.
-fn split_respecting_parens(input: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut depth = 0;
-
-    for ch in input.chars() {
-        match ch {
-            '(' => {
-                depth += 1;
-                current.push(ch);
-            }
-            ')' => {
-                depth -= 1;
-                current.push(ch);
-            }
-            ',' if depth == 0 => {
-                parts.push(current.clone());
-                current.clear();
-            }
-            _ => {
-                current.push(ch);
-            }
-        }
-    }
-
-    if !current.trim().is_empty() {
-        parts.push(current);
-    }
-
-    parts
 }
 
 // ---------------------------------------------------------------------------
@@ -404,5 +266,85 @@ mod tests {
         let schema = parse_sql_schema(ddl).unwrap();
         assert_eq!(schema.tables[0].columns[0].sql_type, "VARCHAR(255)");
         assert_eq!(schema.tables[0].columns[1].sql_type, "VARCHAR(320)");
+    }
+
+    // --- #38 acceptance: cases the hand-rolled scanner got wrong ---
+
+    #[test]
+    fn test_schema_qualified_name() {
+        // The old scanner kept the schema prefix in the table name.
+        let ddl = "CREATE TABLE analytics.events (id BIGINT PRIMARY KEY, kind TEXT);";
+        let schema = parse_sql_schema(ddl).unwrap();
+        assert_eq!(schema.tables.len(), 1);
+        assert_eq!(schema.tables[0].name, "events");
+        assert!(schema.tables[0].columns[0].is_primary_key);
+    }
+
+    #[test]
+    fn test_quoted_identifier_with_whitespace() {
+        let ddl = r#"CREATE TABLE "audit log" ("user name" TEXT NOT NULL, ts TIMESTAMP);"#;
+        let schema = parse_sql_schema(ddl).unwrap();
+        assert_eq!(schema.tables[0].name, "audit log");
+        assert_eq!(schema.tables[0].columns[0].name, "user name");
+        assert!(schema.tables[0].columns[0].is_not_null);
+        assert_eq!(schema.tables[0].columns.len(), 2);
+    }
+
+    #[test]
+    fn test_check_constraint_does_not_corrupt_columns() {
+        // The old scanner split on the comma inside CHECK(...) and produced
+        // bogus columns; here the CHECK must be ignored cleanly.
+        let ddl = r#"
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY,
+                balance NUMERIC(12,2) NOT NULL CHECK (balance >= 0),
+                status TEXT,
+                CHECK (status IN ('open', 'closed'))
+            );
+        "#;
+        let schema = parse_sql_schema(ddl).unwrap();
+        assert_eq!(schema.tables[0].columns.len(), 3);
+        assert_eq!(schema.tables[0].columns[1].name, "balance");
+        assert_eq!(schema.tables[0].columns[1].sql_type, "NUMERIC(12,2)");
+        assert!(schema.tables[0].columns[1].is_not_null);
+        assert_eq!(schema.tables[0].columns[2].name, "status");
+    }
+
+    #[test]
+    fn test_generated_column() {
+        let ddl = r#"
+            CREATE TABLE rectangles (
+                w INTEGER NOT NULL,
+                h INTEGER NOT NULL,
+                area INTEGER GENERATED ALWAYS AS (w * h) STORED
+            );
+        "#;
+        let schema = parse_sql_schema(ddl).unwrap();
+        assert_eq!(schema.tables[0].columns.len(), 3);
+        let area = &schema.tables[0].columns[2];
+        assert_eq!(area.name, "area");
+        assert_eq!(area.sql_type, "INTEGER");
+    }
+
+    #[test]
+    fn test_semicolon_inside_comment_is_not_a_statement_break() {
+        let ddl = r#"
+            CREATE TABLE t (
+                id INTEGER PRIMARY KEY -- a trailing ; inside a comment
+            );
+        "#;
+        let schema = parse_sql_schema(ddl).unwrap();
+        assert_eq!(schema.tables.len(), 1);
+        assert_eq!(schema.tables[0].name, "t");
+        assert_eq!(schema.tables[0].columns.len(), 1);
+    }
+
+    #[test]
+    fn test_invalid_sql_is_an_error_not_a_silent_empty_schema() {
+        let err = parse_sql_schema("CREATE TABLE (((").unwrap_err();
+        assert!(
+            err.to_string().contains("failed to parse SQL DDL"),
+            "unexpected error: {err}"
+        );
     }
 }
