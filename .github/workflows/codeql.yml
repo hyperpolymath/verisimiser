@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: PMPL-1.0
 name: CodeQL Security Analysis
 
 on:
@@ -8,9 +8,11 @@ on:
     branches: [main, master]
   schedule:
     - cron: '0 6 * * 1'
-# Estate guardrail: cancel superseded runs so re-pushes don't pile up
-# queued runs across the estate. Safe here because this workflow only
-# performs read-only checks/lint/test/scan with no publish or mutation.
+
+# Estate guardrail: cancel superseded runs so re-pushes / rebased PR
+# updates do not pile up queued runs against the shared account-wide
+# Actions concurrency pool. Applied only to read-only check workflows
+# (no publish/mutation), so cancelling a superseded run is always safe.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -19,38 +21,7 @@ permissions:
   contents: read
 
 jobs:
-  # The estate is heterogeneous (Rust, Idris2, Agda, Elixir, ReScript,
-  # occasional JS/TS/Python). A hard-coded `javascript-typescript` matrix
-  # made CodeQL exit with a "no source / configuration error" on every
-  # non-JS/TS repo — a permanent false-red `analyze` on most repos' main.
-  # Detect the languages the repo ACTUALLY contains and only analyse the
-  # CodeQL-supported, buildless-safe ones; skip entirely when none apply.
-  detect:
-    runs-on: ubuntu-latest
-    outputs:
-      langs: ${{ steps.pick.outputs.langs }}
-    steps:
-      - name: Pick CodeQL languages from repo language stats
-        id: pick
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          stats=$(gh api "repos/${{ github.repository }}/languages" --jq 'keys[]' 2>/dev/null || echo "")
-          out=""
-          add() { out="$out $1"; }
-          echo "$stats" | grep -qix 'Rust'                 && add rust
-          echo "$stats" | grep -qixE 'JavaScript|TypeScript' && add javascript-typescript
-          echo "$stats" | grep -qix 'Python'               && add python
-          echo "$stats" | grep -qix 'Ruby'                 && add ruby
-          echo "$stats" | grep -qix 'Go'                   && add go
-          arr=$(printf '%s\n' $out | grep . | sort -u | jq -R . | jq -s -c .)
-          [ -z "$arr" ] && arr='[]'
-          echo "Detected CodeQL languages: $arr"
-          echo "langs=$arr" >> "$GITHUB_OUTPUT"
-
   analyze:
-    needs: detect
-    if: needs.detect.outputs.langs != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -58,19 +29,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ${{ fromJSON(needs.detect.outputs.langs) }}
+        include:
+          - language: javascript-typescript
+            build-mode: none
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@0d579ffd059c29b07949a3cce3983f0780820c98 # v3.28.1
+        uses: github/codeql-action/init@c6f931105cb2c34c8f901cc885ba1e2e259cf745 # v3
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build-mode }}
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@0d579ffd059c29b07949a3cce3983f0780820c98 # v3.28.1
+        uses: github/codeql-action/analyze@c6f931105cb2c34c8f901cc885ba1e2e259cf745 # v3
         with:
           category: "/language:${{ matrix.language }}"
