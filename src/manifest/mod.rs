@@ -582,7 +582,7 @@ pub fn init_manifest(database: &str, name: Option<&str>, force: bool) -> Result<
 
     let template = render_manifest_template(database, name);
     std::fs::write(path, template)?;
-    println!("Created {} for {} backend", path, database);
+    tracing::info!(path, backend = database, "created manifest");
     Ok(())
 }
 

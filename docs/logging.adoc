@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+= VeriSimiser diagnostic logging
+:revdate: 2026-05-17
+
+VeriSimiser separates two output streams:
+
+stdout (data)::
+The answer to the command: JSON reports (`status --json`, `gc --json`,
+`validate --json`, `doctor --json`, `version --json`), the human-readable
+`status` / `gc` / `validate` report bodies, the `octad` table, and the
+`version` string. This contract is stable and machine-parseable; logging
+configuration never alters it.
+
+stderr (diagnostics)::
+Progress and status messages emitted via `tracing` (e.g. "parsing
+schema", "generated sidecar schema", "checking temporal drift",
+"created manifest"). Safe to discard; never parse stdout-bound data
+out of this stream.
+
+== Flags
+
+`--log-format=pretty|json`:: diagnostic rendering. Default `pretty`
+(human-readable, coloured). `json` emits one JSON object per line.
+`--log-level=trace|debug|info|warn|error`:: minimum level. Precedence:
+`--log-level` > `RUST_LOG` > `info`. `RUST_LOG` accepts the full
+`tracing-subscriber` `EnvFilter` syntax (e.g. `RUST_LOG=verisimiser=debug`).
+
+Both flags are global: they may appear before or after the subcommand.
+
+== JSON log schema
+
+With `--log-format=json`, each diagnostic line is a JSON object produced by
+`tracing-subscriber`'s JSON formatter. A machine-readable JSON Schema is at
+`docs/logging.schema.json`. Shape:
+
+[source,json]
+----
+{
+  "timestamp": "2026-05-17T12:34:56.789012Z",
+  "level": "INFO",
+  "target": "verisimiser",
+  "fields": { "message": "generated sidecar schema",
+              "path": ".verisim/sidecar_schema.sql" },
+  "spans": []
+}
+----
+
+`timestamp` (RFC 3339), `level` (`TRACE|DEBUG|INFO|WARN|ERROR`), `target`
+(emitting module), and `fields` (always contains `message`; structured
+key/values such as `path`, `schema`, `threshold`, `tables` are added per
+event) are always present. `spans` is present when emitted inside a span.
+Stable contract: consumers may rely on `timestamp`, `level`, `target`, and
+`fields.message`.

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hyperpolymath/verisimiser/docs/logging.schema.json",
+  "title": "VeriSimiser JSON diagnostic log line",
+  "description": "One line of `--log-format=json` output (stderr). stdout data output is NOT covered by this schema.",
+  "type": "object",
+  "required": ["timestamp", "level", "target", "fields"],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 / ISO 8601 event time."
+    },
+    "level": {
+      "type": "string",
+      "enum": ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]
+    },
+    "target": {
+      "type": "string",
+      "description": "Emitting module path, e.g. \"verisimiser\"."
+    },
+    "fields": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "message": { "type": "string" }
+      },
+      "additionalProperties": true,
+      "description": "Always carries `message`; structured key/values (path, schema, threshold, tables, …) are added per event."
+    },
+    "spans": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "additionalProperties": true
+}
