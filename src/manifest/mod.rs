@@ -279,7 +279,11 @@ mod octad_tests {
 /// temporal versions, and access policies. It never writes to your target database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SidecarConfig {
-    /// Storage backend for the sidecar: "sqlite" (default) or "json".
+    /// Storage backend for the sidecar. `"sqlite"` (default) is the only
+    /// implemented store; `"postgres"`/`"postgresql"` selects the
+    /// PostgreSQL DDL dialect. `"json"` is **not implemented** and is
+    /// rejected at `generate` time — tracked by #112 (V-L2-F2). The
+    /// dialect mapping lives in `codegen::overlay::SqlDialect`.
     #[serde(default = "default_sidecar_storage")]
     pub storage: String,
 
