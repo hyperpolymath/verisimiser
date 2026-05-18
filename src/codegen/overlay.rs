@@ -185,12 +185,19 @@ fn generate_metadata_table(schema: &ParsedSchema) -> String {
 /// append-only, tamper-evident log (see
 /// `docs/theory/provenance-threat-model.adoc`).
 ///
-/// The `chain_head` table is the per-entity head pointer used for the
-/// write-path lock (V-L2-L1). The UNIQUE INDEX on `(entity_id,
-/// previous_hash)` (V-L2-L2) makes chain forks structurally impossible
-/// — defence in depth for if the lock is ever bypassed.
+/// ADR-0010 (provenance forks are first-class): the `hash` PRIMARY KEY
+/// is the duplicate guard (the preimage covers every tamper-relevant
+/// field). We deliberately do **not** emit `UNIQUE(entity_id,
+/// previous_hash)` (#32, superseded) — that rejects a divergent second
+/// writer's legitimate history at insert time. Instead a **non-unique**
+/// `idx_provenance_predecessor` makes fork *detection* O(log n), and the
+/// chain tip is a *set* (`verisimdb_provenance_chain_heads`): one row
+/// for a linear entity, several when it has legitimately forked. The
+/// legacy single-head `verisimdb_provenance_chain_head` is kept one
+/// release for non-destructive migration. Mirrors
+/// `tier1::provenance::SIDECAR_DDL` (kept in sync).
 fn generate_provenance_table() -> String {
-    "-- Provenance: SHA-256 hash-chained audit trail\n\
+    "-- Provenance: SHA-256 hash-chained audit trail (ADR-0010)\n\
      CREATE TABLE IF NOT EXISTS verisimdb_provenance_log (\n\
      \x20   hash          TEXT PRIMARY KEY,\n\
      \x20   previous_hash TEXT NOT NULL,\n\
@@ -203,19 +210,25 @@ fn generate_provenance_table() -> String {
      \x20   transformation  TEXT,          -- description of transformation applied\n\
      \x20   CHECK (operation IN ('insert','update','delete','transform'))\n\
      );\n\
-     -- V-L2-L2: forbid chain forks at the DB level. Genesis records all\n\
-     -- carry previous_hash='' so this also enforces a single genesis per\n\
-     -- entity.\n\
-     CREATE UNIQUE INDEX IF NOT EXISTS ux_provenance_chain\n\
+     -- ADR-0010 #32 (superseded): NO UNIQUE(entity_id, previous_hash) —\n\
+     -- a fork that cannot be written cannot be detected or audited. The\n\
+     -- non-unique index below makes fork detection O(log n) instead.\n\
+     CREATE INDEX IF NOT EXISTS idx_provenance_predecessor\n\
      \x20   ON verisimdb_provenance_log(entity_id, previous_hash);\n\
      CREATE INDEX IF NOT EXISTS idx_provenance_entity ON verisimdb_provenance_log(entity_id);\n\
      CREATE INDEX IF NOT EXISTS idx_provenance_table  ON verisimdb_provenance_log(table_name);\n\
      \n\
-     -- V-L2-L1: per-entity head pointer. The write path takes a row\n\
-     -- lock here (SELECT … FOR UPDATE / BEGIN IMMEDIATE) so concurrent\n\
-     -- appenders on the same entity serialise; cross-entity appends\n\
-     -- remain parallel. Each successful append updates head_hash in\n\
-     -- the same transaction as the INSERT into verisimdb_provenance_log.\n\
+     -- ADR-0010 #31: chain-tip *set*. `append_provenance` keeps a\n\
+     -- BEGIN IMMEDIATE write so racing duplicate appends on one node\n\
+     -- still serialise; a linear append swaps its single tip, a\n\
+     -- deliberate fork adds a tip without removing one.\n\
+     CREATE TABLE IF NOT EXISTS verisimdb_provenance_chain_heads (\n\
+     \x20   entity_id TEXT NOT NULL,\n\
+     \x20   head_hash TEXT NOT NULL,\n\
+     \x20   PRIMARY KEY (entity_id, head_hash)\n\
+     );\n\
+     -- Legacy single-head table: kept one release for non-destructive\n\
+     -- migration (see tier1::provenance::SIDECAR_DDL). No DROP ships here.\n\
      CREATE TABLE IF NOT EXISTS verisimdb_provenance_chain_head (\n\
      \x20   entity_id  TEXT PRIMARY KEY,\n\
      \x20   head_hash  TEXT NOT NULL,\n\
@@ -532,22 +545,47 @@ mod tests {
         assert!(ddl.contains("actor"));
     }
 
-    /// V-L2-L2: forks are forbidden by a UNIQUE INDEX on
-    /// (entity_id, previous_hash).
+    /// ADR-0010 (#32 superseded): forks are first-class. The fork guard
+    /// is the `hash` PRIMARY KEY (duplicate-rejection); there must be
+    /// NO `UNIQUE(entity_id, previous_hash)` (it would discard a
+    /// divergent writer's legitimate history). A *non-unique*
+    /// predecessor index provides O(log n) fork detection instead.
     #[test]
-    fn test_provenance_table_has_unique_chain_index() {
+    fn test_provenance_table_fork_detection_index_is_not_unique() {
         let ddl = generate_provenance_table();
-        assert!(ddl.contains("UNIQUE INDEX"));
-        assert!(ddl.contains("ux_provenance_chain"));
+        assert!(
+            !ddl.contains("ux_provenance_chain"),
+            "the superseded UNIQUE(entity_id, previous_hash) must not be emitted"
+        );
+        assert!(
+            !ddl.contains("CREATE UNIQUE INDEX IF NOT EXISTS ux_provenance"),
+            "no unique provenance-chain index (ADR-0010)"
+        );
+        assert!(
+            ddl.contains("idx_provenance_predecessor"),
+            "non-unique fork-detection index must be present"
+        );
         assert!(ddl.contains("(entity_id, previous_hash)"));
     }
 
-    /// V-L2-L1: chain_head table exists for per-entity write serialisation.
+    /// ADR-0010 #31: the chain tip is a *set* (multi-head); the legacy
+    /// single-head table is retained one release for migration.
     #[test]
-    fn test_provenance_table_has_chain_head() {
+    fn test_provenance_table_has_multihead_and_legacy_head() {
         let ddl = generate_provenance_table();
-        assert!(ddl.contains("verisimdb_provenance_chain_head"));
+        assert!(
+            ddl.contains("verisimdb_provenance_chain_heads"),
+            "multi-head set table must exist"
+        );
+        assert!(
+            ddl.contains("verisimdb_provenance_chain_head ("),
+            "legacy single-head table retained for migration"
+        );
         assert!(ddl.contains("head_hash"));
+        assert!(
+            ddl.contains("PRIMARY KEY (entity_id, head_hash)"),
+            "multi-head table keyed by (entity_id, head_hash)"
+        );
     }
 
     #[test]

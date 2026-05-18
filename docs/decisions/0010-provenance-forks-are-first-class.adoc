@@ -8,7 +8,11 @@ Date: 2026-05-16
 
 ## Status
 
-Proposed (design + failing test; tracks #31 and #32)
+Accepted (2026-05-17) — implemented in #31 (multi-head tip set,
+fork-aware append, `fork_points`, per-branch `verify_chain`,
+non-destructive migration). #32 (the `UNIQUE INDEX(entity_id,
+previous_hash)`) is superseded by this ADR and closed not-planned:
+the `hash` PRIMARY KEY is the correct duplicate guard.
 
 ## Context
 
