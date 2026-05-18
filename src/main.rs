@@ -16,8 +16,20 @@
 //   octad      — Show the 8 octad dimensions
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use tracing_subscriber::EnvFilter;
 use verisimiser::{abi, codegen, doctor, gc, manifest, tier1};
+
+/// Diagnostic-log rendering. Data output (reports, version, the octad
+/// table) is always written verbatim to stdout regardless of this; this
+/// only controls the `tracing` diagnostic stream, which goes to stderr.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum LogFormat {
+    /// Human-readable, ANSI-coloured single lines.
+    Pretty,
+    /// One JSON object per line (see docs/logging.adoc for the schema).
+    Json,
+}
 
 /// Long version string: `<crate-version> (<git-describe>, built <date>)`.
 const LONG_VERSION: &str = concat!(
@@ -33,8 +45,34 @@ const LONG_VERSION: &str = concat!(
 #[derive(Parser)]
 #[command(name = "verisimiser", version = LONG_VERSION, about, long_about = None)]
 struct Cli {
+    /// Diagnostic-log format. Diagnostics go to stderr; command data
+    /// output always stays on stdout.
+    #[arg(long, value_enum, default_value_t = LogFormat::Pretty, global = true)]
+    log_format: LogFormat,
+    /// Diagnostic-log level: trace|debug|info|warn|error. Overrides
+    /// `RUST_LOG`. If neither is set, defaults to `info`.
+    #[arg(long, global = true)]
+    log_level: Option<String>,
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Install the global `tracing` subscriber. Writes to **stderr** so the
+/// diagnostic stream never contaminates the stdout data contract
+/// (JSON reports, version strings, the octad table). Precedence for the
+/// level filter: `--log-level` > `RUST_LOG` > `info`.
+fn init_tracing(format: LogFormat, level: Option<&str>) {
+    let filter = match level {
+        Some(l) => EnvFilter::try_new(l).unwrap_or_else(|_| EnvFilter::new("info")),
+        None => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+    };
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr);
+    match format {
+        LogFormat::Json => builder.json().init(),
+        LogFormat::Pretty => builder.init(),
+    }
 }
 
 #[derive(Subcommand)]
@@ -140,6 +178,7 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    init_tracing(cli.log_format, cli.log_level.as_deref());
     match cli.command {
         Commands::Init {
             database,
@@ -152,10 +191,10 @@ fn main() -> Result<()> {
 
             // Determine schema source: from manifest or auto-detect.
             let schema = if let Some(ref schema_path) = m.database.schema_source {
-                println!("Parsing schema from: {}", schema_path);
+                tracing::info!(schema = %schema_path, "parsing schema");
                 codegen::parser::parse_schema_file(schema_path)?
             } else {
-                println!("No schema-source specified; generating empty overlay.");
+                tracing::warn!("no schema-source specified; generating empty overlay");
                 codegen::parser::ParsedSchema {
                     tables: Vec::new(),
                     source: None,
@@ -182,19 +221,19 @@ fn main() -> Result<()> {
                 codegen::overlay::generate_sidecar_schema(&schema, &m.octad, dialect)?;
             let overlay_path = format!("{}/sidecar_schema.sql", output);
             std::fs::write(&overlay_path, &overlay_ddl)?;
-            println!("Generated sidecar schema: {}", overlay_path);
+            tracing::info!(path = %overlay_path, "generated sidecar schema");
 
             // Generate query interceptors.
             let interceptors = codegen::query::generate_interceptors(&schema, &m.octad, backend);
             let interceptor_sql = codegen::query::render_interceptors(&interceptors);
             let interceptor_path = format!("{}/interceptors.sql", output);
             std::fs::write(&interceptor_path, &interceptor_sql)?;
-            println!("Generated query interceptors: {}", interceptor_path);
+            tracing::info!(path = %interceptor_path, "generated query interceptors");
 
-            println!(
-                "\nGeneration complete. {} table(s) processed, {}/8 octad dimensions enabled.",
-                schema.tables.len(),
-                m.octad.enabled_count()
+            tracing::info!(
+                tables = schema.tables.len(),
+                octad_enabled = m.octad.enabled_count(),
+                "generation complete"
             );
             Ok(())
         }
@@ -234,7 +273,7 @@ fn main() -> Result<()> {
                 .query_map([], |r| r.get::<_, String>(0))?
                 .collect::<rusqlite::Result<_>>()?;
 
-            println!("Checking Temporal drift (threshold: {})...", threshold);
+            tracing::info!(threshold, "checking temporal drift");
             let mut reported = 0usize;
             for entity in &entities {
                 let Some(report) = tier1::drift::detect_temporal_drift(&conn, entity)? else {
