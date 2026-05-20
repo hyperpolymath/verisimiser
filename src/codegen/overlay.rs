@@ -64,20 +64,61 @@ fn must_validate_identifier(name: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------------
+// SQL dialect (V-L2-F1, #45)
+// ---------------------------------------------------------------------------
+
+/// The SQL dialect the sidecar DDL is emitted for. Selected from the
+/// manifest's `[sidecar].storage`. The table bodies are written in the
+/// portable subset both engines accept (`CREATE TABLE IF NOT EXISTS`,
+/// `CHECK`, partial unique indexes, `CURRENT_TIMESTAMP`); the only
+/// genuinely dialect-divergent fragment is the metadata upsert
+/// (`INSERT OR IGNORE` vs `INSERT … ON CONFLICT DO NOTHING`), which lives
+/// in the [`sqlite`] / [`postgres`] modules.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SqlDialect {
+    Sqlite,
+    Postgres,
+}
+
+impl SqlDialect {
+    /// Map a `[sidecar].storage` value to a dialect. `sqlite` →
+    /// [`SqlDialect::Sqlite`]; `postgres`/`postgresql` →
+    /// [`SqlDialect::Postgres`]. `json` and unknown values are rejected
+    /// (the previous behaviour silently emitted SQLite DDL regardless,
+    /// V-L2-F1). The JSON store is tracked separately by #112.
+    pub fn from_storage(storage: &str) -> anyhow::Result<Self> {
+        match storage.to_lowercase().as_str() {
+            "sqlite" => Ok(SqlDialect::Sqlite),
+            "postgres" | "postgresql" => Ok(SqlDialect::Postgres),
+            "json" => anyhow::bail!(
+                "[sidecar].storage = \"json\" is not implemented (it previously \
+                 emitted SQLite DDL silently). Use \"sqlite\". The JSON sidecar \
+                 store is tracked by hyperpolymath/verisimiser#112."
+            ),
+            other => anyhow::bail!(
+                "unknown [sidecar].storage {other:?}; supported: \"sqlite\" \
+                 (\"postgres\" for a PostgreSQL sidecar; \"json\" is #112)."
+            ),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Overlay generation
 // ---------------------------------------------------------------------------
 
-/// Generate the complete sidecar schema DDL for all enabled octad dimensions.
+/// Generate the complete sidecar schema DDL for all enabled octad
+/// dimensions, in the requested SQL `dialect`.
 ///
-/// The generated SQL is SQLite-compatible (the default sidecar backend).
 /// Each table is created with `IF NOT EXISTS` so the schema can be applied
-/// idempotently.
+/// idempotently. Dispatches to [`sqlite::generate`] / [`postgres::generate`].
 ///
 /// # Arguments
 /// * `schema` - The parsed schema of the target database (used to reference
 ///   table names in provenance and temporal tracking).
 /// * `octad` - The octad configuration from the manifest, controlling which
 ///   dimension tables to generate.
+/// * `dialect` - The sidecar SQL dialect (see [`SqlDialect::from_storage`]).
 ///
 /// # Returns
 /// `Ok(String)` with the complete DDL on success. `Err` if any table or
@@ -87,6 +128,21 @@ fn must_validate_identifier(name: &str) -> &str {
 pub fn generate_sidecar_schema(
     schema: &ParsedSchema,
     octad: &OctadConfig,
+    dialect: SqlDialect,
+) -> anyhow::Result<String> {
+    match dialect {
+        SqlDialect::Sqlite => sqlite::generate(schema, octad),
+        SqlDialect::Postgres => postgres::generate(schema, octad),
+    }
+}
+
+/// Shared schema body: validate identifiers, then assemble every enabled
+/// octad table. The metadata *seed* (the only dialect-divergent fragment)
+/// is supplied by the caller via `seed`.
+fn assemble(
+    schema: &ParsedSchema,
+    octad: &OctadConfig,
+    seed: impl Fn(&ParsedSchema) -> String,
 ) -> anyhow::Result<String> {
     use crate::codegen::ident::validate_identifier;
 
@@ -105,7 +161,9 @@ pub fn generate_sidecar_schema(
     ddl.push_str("-- Do not edit manually; regenerate with `verisimiser init`.\n\n");
 
     // Metadata table: tracks which target tables are being augmented.
-    ddl.push_str(&generate_metadata_table(schema));
+    // The CREATE is portable; the seed upsert is dialect-specific.
+    ddl.push_str(&metadata_table_ddl());
+    ddl.push_str(&seed(schema));
 
     if octad.enable_provenance {
         ddl.push_str(&generate_provenance_table());
@@ -130,52 +188,103 @@ pub fn generate_sidecar_schema(
     Ok(ddl)
 }
 
-/// Generate the metadata table that tracks which target tables are augmented.
+/// The metadata table CREATE — portable across SQLite and PostgreSQL.
 ///
 /// This table is always created regardless of octad configuration, because
-/// the Data and Metadata dimensions are always active.
-fn generate_metadata_table(schema: &ParsedSchema) -> String {
-    let mut ddl = String::new();
+/// the Data and Metadata dimensions are always active. The per-table seed
+/// rows are dialect-specific and emitted by [`sqlite`] / [`postgres`].
+fn metadata_table_ddl() -> String {
+    "-- Metadata: tracks augmented target tables\n\
+     CREATE TABLE IF NOT EXISTS verisimdb_metadata (\n\
+     \x20   table_name   TEXT PRIMARY KEY,\n\
+     \x20   column_count INTEGER NOT NULL,\n\
+     \x20   pk_columns   TEXT NOT NULL,   -- comma-separated list of PK column names\n\
+     \x20   discovered_at TEXT NOT NULL    -- ISO 8601 timestamp\n\
+     );\n\n"
+        .to_string()
+}
 
-    ddl.push_str("-- Metadata: tracks augmented target tables\n");
-    ddl.push_str(
-        "CREATE TABLE IF NOT EXISTS verisimdb_metadata (\n\
-         \x20   table_name   TEXT PRIMARY KEY,\n\
-         \x20   column_count INTEGER NOT NULL,\n\
-         \x20   pk_columns   TEXT NOT NULL,   -- comma-separated list of PK column names\n\
-         \x20   discovered_at TEXT NOT NULL    -- ISO 8601 timestamp\n\
-         );\n\n",
-    );
-
-    // Generate INSERT statements for each discovered table.
-    //
-    // V-L2-G1: every identifier flowing into the SQL string here is
-    // validated. Anything that wouldn't match `^[A-Za-z_][A-Za-z0-9_]*$`
-    // is rejected at codegen time rather than allowed to land in DDL
-    // (where it would be an injection vector).
-    if !schema.tables.is_empty() {
-        ddl.push_str("-- Seed metadata from parsed schema\n");
-        for table in &schema.tables {
-            let table_name = must_validate_identifier(&table.name);
-            let pk_cols: Vec<&str> = table
+/// Per-table seed values, shared by both dialects. Returns
+/// `(validated_table_name, column_count, validated_pk_csv)`.
+///
+/// V-L2-G1: every identifier flowing into the SQL string here is
+/// validated. Anything that wouldn't match `^[A-Za-z_][A-Za-z0-9_]*$`
+/// is rejected at codegen time rather than allowed to land in DDL
+/// (where it would be an injection vector).
+fn metadata_rows(schema: &ParsedSchema) -> Vec<(&str, usize, String)> {
+    schema
+        .tables
+        .iter()
+        .map(|table| {
+            let name = must_validate_identifier(&table.name);
+            let pk_csv = table
                 .columns
                 .iter()
                 .filter(|c| c.is_primary_key)
                 .map(|c| must_validate_identifier(c.name.as_str()))
-                .collect();
-            let pk_str = pk_cols.join(",");
+                .collect::<Vec<_>>()
+                .join(",");
+            (name, table.columns.len(), pk_csv)
+        })
+        .collect()
+}
+
+/// SQLite-specific sidecar DDL emission (V-L2-F1, #45).
+pub mod sqlite {
+    use super::*;
+
+    /// SQLite metadata seed: `INSERT OR IGNORE` + portable
+    /// `CURRENT_TIMESTAMP` (was the SQLite-only `datetime('now')`).
+    pub(super) fn metadata_seed(schema: &ParsedSchema) -> String {
+        if schema.tables.is_empty() {
+            return String::new();
+        }
+        let mut ddl = String::from("-- Seed metadata from parsed schema (SQLite)\n");
+        for (name, ncols, pk_csv) in metadata_rows(schema) {
             ddl.push_str(&format!(
                 "INSERT OR IGNORE INTO verisimdb_metadata (table_name, column_count, pk_columns, discovered_at)\n\
-                 \x20   VALUES ('{}', {}, '{}', datetime('now'));\n",
-                table_name,
-                table.columns.len(),
-                pk_str,
+                 \x20   VALUES ('{}', {}, '{}', CURRENT_TIMESTAMP);\n",
+                name, ncols, pk_csv,
             ));
         }
         ddl.push('\n');
+        ddl
     }
 
-    ddl
+    /// Generate the full SQLite sidecar schema.
+    pub fn generate(schema: &ParsedSchema, octad: &OctadConfig) -> anyhow::Result<String> {
+        assemble(schema, octad, metadata_seed)
+    }
+}
+
+/// PostgreSQL-specific sidecar DDL emission (V-L2-F1, #45).
+pub mod postgres {
+    use super::*;
+
+    /// PostgreSQL metadata seed: `INSERT … ON CONFLICT DO NOTHING`
+    /// (SQLite's `INSERT OR IGNORE` is not valid PostgreSQL) + portable
+    /// `CURRENT_TIMESTAMP`.
+    pub(super) fn metadata_seed(schema: &ParsedSchema) -> String {
+        if schema.tables.is_empty() {
+            return String::new();
+        }
+        let mut ddl = String::from("-- Seed metadata from parsed schema (PostgreSQL)\n");
+        for (name, ncols, pk_csv) in metadata_rows(schema) {
+            ddl.push_str(&format!(
+                "INSERT INTO verisimdb_metadata (table_name, column_count, pk_columns, discovered_at)\n\
+                 \x20   VALUES ('{}', {}, '{}', CURRENT_TIMESTAMP)\n\
+                 \x20   ON CONFLICT (table_name) DO NOTHING;\n",
+                name, ncols, pk_csv,
+            ));
+        }
+        ddl.push('\n');
+        ddl
+    }
+
+    /// Generate the full PostgreSQL sidecar schema.
+    pub fn generate(schema: &ParsedSchema, octad: &OctadConfig) -> anyhow::Result<String> {
+        assemble(schema, octad, metadata_seed)
+    }
 }
 
 /// Generate the provenance log table for the Provenance dimension.
@@ -185,12 +294,19 @@ fn generate_metadata_table(schema: &ParsedSchema) -> String {
 /// append-only, tamper-evident log (see
 /// `docs/theory/provenance-threat-model.adoc`).
 ///
-/// The `chain_head` table is the per-entity head pointer used for the
-/// write-path lock (V-L2-L1). The UNIQUE INDEX on `(entity_id,
-/// previous_hash)` (V-L2-L2) makes chain forks structurally impossible
-/// — defence in depth for if the lock is ever bypassed.
+/// ADR-0010 (provenance forks are first-class): the `hash` PRIMARY KEY
+/// is the duplicate guard (the preimage covers every tamper-relevant
+/// field). We deliberately do **not** emit `UNIQUE(entity_id,
+/// previous_hash)` (#32, superseded) — that rejects a divergent second
+/// writer's legitimate history at insert time. Instead a **non-unique**
+/// `idx_provenance_predecessor` makes fork *detection* O(log n), and the
+/// chain tip is a *set* (`verisimdb_provenance_chain_heads`): one row
+/// for a linear entity, several when it has legitimately forked. The
+/// legacy single-head `verisimdb_provenance_chain_head` is kept one
+/// release for non-destructive migration. Mirrors
+/// `tier1::provenance::SIDECAR_DDL` (kept in sync).
 fn generate_provenance_table() -> String {
-    "-- Provenance: SHA-256 hash-chained audit trail\n\
+    "-- Provenance: SHA-256 hash-chained audit trail (ADR-0010)\n\
      CREATE TABLE IF NOT EXISTS verisimdb_provenance_log (\n\
      \x20   hash          TEXT PRIMARY KEY,\n\
      \x20   previous_hash TEXT NOT NULL,\n\
@@ -203,19 +319,25 @@ fn generate_provenance_table() -> String {
      \x20   transformation  TEXT,          -- description of transformation applied\n\
      \x20   CHECK (operation IN ('insert','update','delete','transform'))\n\
      );\n\
-     -- V-L2-L2: forbid chain forks at the DB level. Genesis records all\n\
-     -- carry previous_hash='' so this also enforces a single genesis per\n\
-     -- entity.\n\
-     CREATE UNIQUE INDEX IF NOT EXISTS ux_provenance_chain\n\
+     -- ADR-0010 #32 (superseded): NO UNIQUE(entity_id, previous_hash) —\n\
+     -- a fork that cannot be written cannot be detected or audited. The\n\
+     -- non-unique index below makes fork detection O(log n) instead.\n\
+     CREATE INDEX IF NOT EXISTS idx_provenance_predecessor\n\
      \x20   ON verisimdb_provenance_log(entity_id, previous_hash);\n\
      CREATE INDEX IF NOT EXISTS idx_provenance_entity ON verisimdb_provenance_log(entity_id);\n\
      CREATE INDEX IF NOT EXISTS idx_provenance_table  ON verisimdb_provenance_log(table_name);\n\
      \n\
-     -- V-L2-L1: per-entity head pointer. The write path takes a row\n\
-     -- lock here (SELECT … FOR UPDATE / BEGIN IMMEDIATE) so concurrent\n\
-     -- appenders on the same entity serialise; cross-entity appends\n\
-     -- remain parallel. Each successful append updates head_hash in\n\
-     -- the same transaction as the INSERT into verisimdb_provenance_log.\n\
+     -- ADR-0010 #31: chain-tip *set*. `append_provenance` keeps a\n\
+     -- BEGIN IMMEDIATE write so racing duplicate appends on one node\n\
+     -- still serialise; a linear append swaps its single tip, a\n\
+     -- deliberate fork adds a tip without removing one.\n\
+     CREATE TABLE IF NOT EXISTS verisimdb_provenance_chain_heads (\n\
+     \x20   entity_id TEXT NOT NULL,\n\
+     \x20   head_hash TEXT NOT NULL,\n\
+     \x20   PRIMARY KEY (entity_id, head_hash)\n\
+     );\n\
+     -- Legacy single-head table: kept one release for non-destructive\n\
+     -- migration (see tier1::provenance::SIDECAR_DDL). No DROP ships here.\n\
      CREATE TABLE IF NOT EXISTS verisimdb_provenance_chain_head (\n\
      \x20   entity_id  TEXT PRIMARY KEY,\n\
      \x20   head_hash  TEXT NOT NULL,\n\
@@ -380,7 +502,8 @@ mod tests {
             enable_constraints: true,
             enable_simulation: true,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite)
+            .expect("test schema must validate");
 
         assert!(ddl.contains("verisimdb_metadata"));
         assert!(ddl.contains("verisimdb_provenance_log"));
@@ -404,7 +527,8 @@ mod tests {
             enable_constraints: true,
             enable_simulation: true,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite)
+            .expect("test schema must validate");
 
         // Self-referencing FK on parent_branch.
         assert!(
@@ -447,7 +571,8 @@ mod tests {
             enable_constraints: false,
             enable_simulation: false,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite)
+            .expect("test schema must validate");
         assert!(ddl.contains("verisimdb_temporal_versions"));
         assert!(
             ddl.contains("CREATE UNIQUE INDEX IF NOT EXISTS ux_temporal_current"),
@@ -478,7 +603,8 @@ mod tests {
             enable_constraints: false,
             enable_simulation: false,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite)
+            .expect("test schema must validate");
         assert!(ddl.contains("verisimdb_lineage_graph"));
         // The exact CHECK clause must be present in the emitted DDL.
         assert!(
@@ -500,7 +626,8 @@ mod tests {
             enable_constraints: false,
             enable_simulation: false,
         };
-        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite)
+            .expect("test schema must validate");
 
         // Metadata is always generated.
         assert!(ddl.contains("verisimdb_metadata"));
@@ -516,7 +643,8 @@ mod tests {
     fn test_metadata_seeds_table_info() {
         let schema = test_schema();
         let octad = OctadConfig::default();
-        let ddl = generate_sidecar_schema(&schema, &octad).expect("test schema must validate");
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite)
+            .expect("test schema must validate");
 
         assert!(ddl.contains("INSERT OR IGNORE INTO verisimdb_metadata"));
         assert!(ddl.contains("'posts'"));
@@ -532,22 +660,47 @@ mod tests {
         assert!(ddl.contains("actor"));
     }
 
-    /// V-L2-L2: forks are forbidden by a UNIQUE INDEX on
-    /// (entity_id, previous_hash).
+    /// ADR-0010 (#32 superseded): forks are first-class. The fork guard
+    /// is the `hash` PRIMARY KEY (duplicate-rejection); there must be
+    /// NO `UNIQUE(entity_id, previous_hash)` (it would discard a
+    /// divergent writer's legitimate history). A *non-unique*
+    /// predecessor index provides O(log n) fork detection instead.
     #[test]
-    fn test_provenance_table_has_unique_chain_index() {
+    fn test_provenance_table_fork_detection_index_is_not_unique() {
         let ddl = generate_provenance_table();
-        assert!(ddl.contains("UNIQUE INDEX"));
-        assert!(ddl.contains("ux_provenance_chain"));
+        assert!(
+            !ddl.contains("ux_provenance_chain"),
+            "the superseded UNIQUE(entity_id, previous_hash) must not be emitted"
+        );
+        assert!(
+            !ddl.contains("CREATE UNIQUE INDEX IF NOT EXISTS ux_provenance"),
+            "no unique provenance-chain index (ADR-0010)"
+        );
+        assert!(
+            ddl.contains("idx_provenance_predecessor"),
+            "non-unique fork-detection index must be present"
+        );
         assert!(ddl.contains("(entity_id, previous_hash)"));
     }
 
-    /// V-L2-L1: chain_head table exists for per-entity write serialisation.
+    /// ADR-0010 #31: the chain tip is a *set* (multi-head); the legacy
+    /// single-head table is retained one release for migration.
     #[test]
-    fn test_provenance_table_has_chain_head() {
+    fn test_provenance_table_has_multihead_and_legacy_head() {
         let ddl = generate_provenance_table();
-        assert!(ddl.contains("verisimdb_provenance_chain_head"));
+        assert!(
+            ddl.contains("verisimdb_provenance_chain_heads"),
+            "multi-head set table must exist"
+        );
+        assert!(
+            ddl.contains("verisimdb_provenance_chain_head ("),
+            "legacy single-head table retained for migration"
+        );
         assert!(ddl.contains("head_hash"));
+        assert!(
+            ddl.contains("PRIMARY KEY (entity_id, head_hash)"),
+            "multi-head table keyed by (entity_id, head_hash)"
+        );
     }
 
     #[test]
@@ -641,5 +794,97 @@ mod tests {
                 attack
             );
         }
+    }
+
+    // --- #45 acceptance: per-dialect DDL + storage mapping ---
+
+    #[test]
+    fn test_sqlite_dialect_seed_and_portable_timestamp() {
+        let schema = test_schema();
+        let octad = OctadConfig::default();
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite)
+            .expect("sqlite ddl");
+        assert!(ddl.contains("INSERT OR IGNORE INTO verisimdb_metadata"));
+        assert!(
+            ddl.contains("CURRENT_TIMESTAMP"),
+            "portable timestamp must replace datetime(now)"
+        );
+        assert!(
+            !ddl.contains("datetime('now')"),
+            "the SQLite-only datetime('now') must be gone (V-L2-F1)"
+        );
+        assert!(ddl.contains("'posts'") && ddl.contains("verisimdb_provenance_log"));
+    }
+
+    #[test]
+    fn test_postgres_dialect_uses_on_conflict_not_or_ignore() {
+        let schema = test_schema();
+        let octad = OctadConfig::default();
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Postgres)
+            .expect("postgres ddl");
+        assert!(
+            ddl.contains("ON CONFLICT (table_name) DO NOTHING"),
+            "postgres metadata upsert must use ON CONFLICT"
+        );
+        assert!(
+            !ddl.contains("INSERT OR IGNORE"),
+            "INSERT OR IGNORE is not valid PostgreSQL"
+        );
+        assert!(ddl.contains("CURRENT_TIMESTAMP") && !ddl.contains("datetime('now')"));
+        assert!(ddl.contains("verisimdb_metadata") && ddl.contains("'posts'"));
+    }
+
+    #[test]
+    fn test_both_dialects_share_the_octad_table_bodies() {
+        let schema = test_schema();
+        let octad = OctadConfig::default();
+        let s = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite).unwrap();
+        let p = generate_sidecar_schema(&schema, &octad, SqlDialect::Postgres).unwrap();
+        for table in [
+            "verisimdb_provenance_log",
+            "verisimdb_lineage_graph",
+            "verisimdb_temporal_versions",
+            "verisimdb_access_policies",
+        ] {
+            assert!(s.contains(table), "sqlite missing {table}");
+            assert!(p.contains(table), "postgres missing {table}");
+        }
+    }
+
+    #[test]
+    fn test_empty_schema_emits_no_seed_in_either_dialect() {
+        let schema = ParsedSchema {
+            tables: vec![],
+            source: None,
+        };
+        let octad = OctadConfig::default();
+        let s = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite).unwrap();
+        let p = generate_sidecar_schema(&schema, &octad, SqlDialect::Postgres).unwrap();
+        assert!(!s.contains("INSERT OR IGNORE") && s.contains("verisimdb_metadata"));
+        assert!(!s.contains("Seed metadata from parsed schema"));
+        assert!(!p.contains("ON CONFLICT") && p.contains("verisimdb_metadata"));
+        assert!(!p.contains("Seed metadata from parsed schema"));
+    }
+
+    #[test]
+    fn test_storage_to_dialect_mapping() {
+        assert_eq!(
+            SqlDialect::from_storage("sqlite").unwrap(),
+            SqlDialect::Sqlite
+        );
+        assert_eq!(
+            SqlDialect::from_storage("postgres").unwrap(),
+            SqlDialect::Postgres
+        );
+        assert_eq!(
+            SqlDialect::from_storage("PostgreSQL").unwrap(),
+            SqlDialect::Postgres
+        );
+        let json_err = SqlDialect::from_storage("json").unwrap_err().to_string();
+        assert!(
+            json_err.contains("not implemented") && json_err.contains("#112"),
+            "json must be rejected with the #112 pointer, got: {json_err}"
+        );
+        assert!(SqlDialect::from_storage("mariadb").is_err());
     }
 }

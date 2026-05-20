@@ -1,16 +1,14 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
-# governance.yml — single wrapper that calls the shared estate governance
-# bundle in hyperpolymath/standards instead of carrying ~8 local copies.
+# governance.yml — single wrapper calling the shared estate governance bundle
+# in hyperpolymath/standards instead of carrying per-repo copies.
 #
-# Replaces (deleted in verisimiser#59):
+# Replaces the per-repo governance scaffolding removed in the same commit:
 #   quality.yml, guix-nix-policy.yml, npm-bun-blocker.yml, ts-blocker.yml,
 #   security-policy.yml, rsr-antipattern.yml, wellknown-enforcement.yml,
 #   workflow-linter.yml
 #
-# Load-bearing workflows stay standalone in this repo:
-#   rust-ci, codeql, dependabot-automerge, release
-# (plus repo-specific gates dogfood-gate / static-analysis-gate and the
-#  mirror/pages/scan plumbing, which have side effects or no PR noise).
+# Load-bearing build/security workflows stay standalone in the repo
+# (rust-ci, codeql, dependabot, release, scan/mirror/pages plumbing).
 
 name: Governance
 
@@ -19,6 +17,14 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+
+# Estate guardrail: cancel superseded runs so re-pushes / rebased PR
+# updates do not pile up queued runs against the shared account-wide
+# Actions concurrency pool. Applied only to read-only check workflows
+# (no publish/mutation), so cancelling a superseded run is always safe.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

@@ -78,7 +78,7 @@ fn test_full_pipeline_blog_schema() {
         enable_constraints: true,
         enable_simulation: false,
     };
-    let overlay_ddl = overlay::generate_sidecar_schema(&schema, &octad).expect("schema is valid");
+    let overlay_ddl = overlay::generate_sidecar_schema(&schema, &octad, overlay::SqlDialect::Sqlite).expect("schema is valid");
 
     // Verify all expected sidecar tables are present.
     assert!(
@@ -487,7 +487,7 @@ path = ".verisim/test.db"
 
     // Generate overlay.
     let overlay_ddl =
-        overlay::generate_sidecar_schema(&schema, &manifest.octad).expect("schema is valid");
+        overlay::generate_sidecar_schema(&schema, &manifest.octad, overlay::SqlDialect::Sqlite).expect("schema is valid");
     assert!(overlay_ddl.contains("verisimdb_provenance_log"));
     assert!(overlay_ddl.contains("verisimdb_temporal_versions"));
     assert!(

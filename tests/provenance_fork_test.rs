@@ -1,34 +1,22 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 //
-// FAILING-BY-DESIGN test for the fork-impossibility defect
-// (#31 + #32, see docs/decisions/0010-provenance-forks-are-first-class.adoc).
+// ADR-0010 (provenance forks are first-class) acceptance suite for
+// #31 (and #32, superseded). Provenance forks — two valid children of
+// the same predecessor (network-partitioned honest writers, replicas,
+// simulation branches) — must be representable, persisted, detectable,
+// and verifiable. The integrity property is tamper-evidence and
+// no-silent-loss, NOT linearity.
 //
-// This test encodes the *desired* behaviour: a legitimate provenance
-// fork (two valid children of the same predecessor — e.g. two
-// network-partitioned honest writers, or a simulation branch) must be
-// representable, persisted, and detectable.
-//
-// It is EXPECTED TO FAIL on `main` today, because:
-//   * `verisimdb_provenance_chain_head` has `entity_id` as PRIMARY KEY,
-//     so an entity can only ever record ONE head — the second branch's
-//     head is silently overwritten (INSERT OR REPLACE).
-//   * there is no fork-aware append / detection surface.
-//   * if #32's `UNIQUE INDEX(entity_id, previous_hash)` were applied,
-//     the second child insert would additionally fail with a
-//     constraint violation.
-//
-// The implementing PR for #31/#32 makes this test pass (multi-head
-// table + fork-aware append + `fork_points`). Until then it documents
-// the defect in executable form.
-//
-// It compiles against the *current* public surface so CI exercises it
-// rather than ignoring it; the assertions — not the compile — are what
-// fail.
+// These tests were failing-by-design on `main`; the #31 implementation
+// (multi-head tip set + fork-aware append + fork_points + per-branch
+// verify) makes them pass.
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use verisimiser::abi::ProvenanceEntry;
-use verisimiser::tier1::provenance::{append_provenance, init_sidecar_schema};
+use verisimiser::tier1::provenance::{
+    append_provenance, append_provenance_fork, fork_points, init_sidecar_schema, verify_chain,
+};
 
 fn open_sidecar() -> Connection {
     let conn = Connection::open_in_memory().expect("open in-memory sidecar");
@@ -36,20 +24,17 @@ fn open_sidecar() -> Connection {
     conn
 }
 
-/// Count chain heads recorded for an entity. Today this can only ever
-/// be 0 or 1 because `entity_id` is the PRIMARY KEY of the head table;
-/// the target design records one row per live branch tip.
+/// Rows in the multi-head tip set for `entity_id`.
 fn head_count(conn: &Connection, entity_id: &str) -> i64 {
     conn.query_row(
-        "SELECT COUNT(*) FROM verisimdb_provenance_chain_head WHERE entity_id = ?1",
+        "SELECT COUNT(*) FROM verisimdb_provenance_chain_heads WHERE entity_id = ?1",
         [entity_id],
         |r| r.get(0),
     )
     .unwrap_or(0)
 }
 
-/// Number of rows in the log whose `previous_hash` is `parent` — i.e.
-/// how many children that node has. > 1 ==> a fork at `parent`.
+/// Children of `parent` (rows whose `previous_hash = parent`). > 1 ⇒ fork.
 fn child_count(conn: &Connection, entity_id: &str, parent: &str) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM verisimdb_provenance_log \
@@ -60,64 +45,130 @@ fn child_count(conn: &Connection, entity_id: &str, parent: &str) -> i64 {
     .unwrap_or(0)
 }
 
+fn log_count(conn: &Connection, entity_id: &str) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM verisimdb_provenance_log WHERE entity_id = ?1",
+        [entity_id],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
 #[test]
 fn fork_can_be_written_and_both_branches_persist() {
     let mut conn = open_sidecar();
     let entity = "account:42";
 
-    // Genesis + one normal child via the supported linear path.
-    let genesis = append_provenance(
-        &mut conn, entity, "accounts", "insert", "alice", None, None,
+    // Genesis, then a normal linear child (branch A) off it.
+    let genesis =
+        append_provenance(&mut conn, entity, "accounts", "insert", "alice", None, None)
+            .expect("genesis append");
+    let _branch_a =
+        append_provenance(&mut conn, entity, "accounts", "update", "alice", None, None)
+            .expect("branch A append (linear, off genesis)");
+
+    // A second, partitioned-but-honest writer extends the chain from
+    // the SAME genesis tip — a legitimate fork via the explicit API.
+    let branch_b = append_provenance_fork(
+        &mut conn, entity, "accounts", "update", "bob", None, None, &genesis,
     )
-    .expect("genesis append");
-    let _branch_a = append_provenance(
-        &mut conn, entity, "accounts", "update", "alice", None, None,
-    )
-    .expect("branch A append");
+    .expect("branch B append (fork from genesis)");
 
-    // A second, legitimate writer (partitioned from the first) extends
-    // the chain from the SAME genesis tip: a fork. There is no
-    // supported API for "chain from this specific ancestor" yet, so we
-    // construct the entry the way the target `append_provenance_fork`
-    // will and write it directly. The hash is canonical and the row is
-    // internally valid — it is honest history, not tampering.
-    let ts = chrono::Utc::now();
-    let branch_b_hash = ProvenanceEntry::compute_hash(
-        &genesis, entity, "update", "bob", &ts, None, None,
-    );
-    conn.execute(
-        "INSERT INTO verisimdb_provenance_log \
-         (hash, previous_hash, entity_id, table_name, operation, actor, \
-          timestamp, before_snapshot, transformation) \
-         VALUES (?1, ?2, ?3, 'accounts', 'update', 'bob', ?4, NULL, NULL)",
-        params![branch_b_hash, genesis, entity, ts.to_rfc3339()],
-    )
-    .expect("fork row insert (fails here once #32 unique index is added)");
-
-    // The target design also records branch B's head. Today the head
-    // table cannot hold two heads for one entity (entity_id is PK), so
-    // we attempt the insert the implementing PR will do.
-    let _ = conn.execute(
-        "INSERT INTO verisimdb_provenance_chain_head (entity_id, head_hash) \
-         VALUES (?1, ?2)",
-        params![entity, branch_b_hash],
-    );
-
-    // --- Desired-behaviour assertions (expected to FAIL on main) ---
-
-    // Both children of genesis must be retained: this is a true fork.
+    // Genesis must have two children — the fork is representable, not
+    // silently collapsed.
     assert_eq!(
         child_count(&conn, entity, &genesis),
         2,
-        "genesis must have two children (branch A + branch B) — the \
-         fork must be representable, not silently collapsed",
+        "genesis must have two children (branch A + branch B)"
     );
-
-    // The entity now has two live branch tips; both must be tracked.
+    // Three log rows total: genesis, A, B.
+    assert_eq!(log_count(&conn, entity), 3, "all three entries persist");
+    // Two live branch tips, both tracked (linear A-tip + fork B-tip).
     assert_eq!(
         head_count(&conn, entity),
         2,
-        "a forked entity must record one head per branch; today the \
-         single-row-per-entity head table cannot express this (#31)",
+        "a forked entity records one head per branch"
+    );
+    assert!(!branch_b.is_empty());
+}
+
+#[test]
+fn fork_points_detects_the_divergence() {
+    let mut conn = open_sidecar();
+    let entity = "doc:7";
+
+    let genesis = append_provenance(&mut conn, entity, "docs", "insert", "a", None, None).unwrap();
+    let _a = append_provenance(&mut conn, entity, "docs", "update", "a", None, None).unwrap();
+    let _b = append_provenance_fork(
+        &mut conn, entity, "docs", "update", "b", None, None, &genesis,
+    )
+    .unwrap();
+
+    let forks = fork_points(&conn, entity).expect("fork_points query");
+    assert_eq!(forks.len(), 1, "exactly one divergence point");
+    assert_eq!(forks[0].predecessor, genesis, "the fork is at genesis");
+    assert_eq!(forks[0].children, 2, "genesis has two children");
+
+    // A purely linear entity has no fork points.
+    let mut c2 = open_sidecar();
+    append_provenance(&mut c2, "lin:1", "t", "insert", "a", None, None).unwrap();
+    append_provenance(&mut c2, "lin:1", "t", "update", "a", None, None).unwrap();
+    assert!(fork_points(&c2, "lin:1").unwrap().is_empty());
+}
+
+#[test]
+fn each_branch_verifies_independently() {
+    let mut conn = open_sidecar();
+    let entity = "sim:1";
+
+    let genesis = append_provenance(&mut conn, entity, "t", "insert", "a", None, None).unwrap();
+    append_provenance(&mut conn, entity, "t", "update", "a", None, None).unwrap();
+    append_provenance_fork(&mut conn, entity, "t", "transform", "b", None, None, &genesis)
+        .unwrap();
+
+    // Divergence is not tampering: every branch is hash-consistent, so
+    // the forked entity must still verify true.
+    assert!(
+        verify_chain(&conn, entity).expect("verify forked entity"),
+        "a forked-but-honest history must verify (each branch consistent)"
+    );
+
+    // Tampering one branch's row must still be caught.
+    conn.execute(
+        "UPDATE verisimdb_provenance_log SET actor = 'mallory' \
+         WHERE entity_id = ?1 AND actor = 'b'",
+        [entity],
+    )
+    .unwrap();
+    assert!(
+        !verify_chain(&conn, entity).unwrap(),
+        "tampering a forked branch must still fail verification"
+    );
+}
+
+#[test]
+fn exact_duplicate_entry_is_rejected() {
+    let conn = open_sidecar();
+    let entity = "dup:1";
+    let ts = chrono::Utc::now();
+    let hash = ProvenanceEntry::compute_hash("", entity, "insert", "a", &ts, None, None);
+
+    let insert = |h: &str| {
+        conn.execute(
+            "INSERT INTO verisimdb_provenance_log \
+             (hash, previous_hash, entity_id, table_name, operation, actor, \
+              timestamp, before_snapshot, transformation) \
+             VALUES (?1, '', ?2, 't', 'insert', 'a', ?3, NULL, NULL)",
+            params![h, entity, ts.to_rfc3339()],
+        )
+    };
+
+    insert(&hash).expect("first insert of a unique entry succeeds");
+    // A byte-identical entry has the same domain-tagged hash and so
+    // collides on the `hash` PRIMARY KEY — the correct duplicate guard
+    // the superseded UNIQUE index was trying (wrongly) to provide.
+    assert!(
+        insert(&hash).is_err(),
+        "an exact-duplicate entry must be rejected by the hash PK"
     );
 }
