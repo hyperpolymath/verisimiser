@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: PMPL-1.0-or-later
+// SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 //
 // Sidecar overlay schema generator for VeriSimiser.
@@ -54,7 +54,7 @@ pub fn generate_sidecar_schema(
 
     let mut ddl = String::new();
 
-    ddl.push_str("-- SPDX-License-Identifier: PMPL-1.0-or-later\n");
+    ddl.push_str("-- SPDX-License-Identifier: MPL-2.0\n");
     ddl.push_str("-- VeriSimiser sidecar schema (auto-generated)\n");
     ddl.push_str("-- Do not edit manually; regenerate with `verisimiser init`.\n\n");
 

@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: PMPL-1.0-or-later
+-- SPDX-License-Identifier: MPL-2.0
 -- Example blog database schema for VeriSimiser.
 --
 -- This schema represents a typical blog application with users, posts,

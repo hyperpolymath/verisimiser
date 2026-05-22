@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: PMPL-1.0-or-later
+// SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 //
 // Query interceptor generator for VeriSimiser.
@@ -294,7 +294,7 @@ fn generate_access_filter(table_name: &str, _backend: DatabaseBackend) -> String
 /// This is the main entry point for writing the interceptor output to a file.
 pub fn render_interceptors(interceptors: &[TableInterceptor]) -> String {
     let mut output = String::new();
-    output.push_str("-- SPDX-License-Identifier: PMPL-1.0-or-later\n");
+    output.push_str("-- SPDX-License-Identifier: MPL-2.0\n");
     output.push_str("-- VeriSimiser query interceptors (auto-generated)\n\n");
 
     for interceptor in interceptors {
