@@ -29,9 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: javascript-typescript
-            build-mode: none
+        language: [rust]
 
     steps:
       - name: Checkout
