@@ -282,9 +282,8 @@ pub fn fork_points(conn: &Connection, entity_id: &str) -> rusqlite::Result<Vec<F
 
 /// The current set of branch-tip hashes for `entity_id`.
 fn head_set(conn: &Connection, entity_id: &str) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id = ?1",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id = ?1")?;
     let rows = stmt.query_map([entity_id], |r| r.get::<_, String>(0))?;
     rows.collect()
 }
@@ -489,7 +488,9 @@ mod tests {
 
         let heads: Vec<String> = {
             let mut s = conn
-                .prepare("SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id='e1'")
+                .prepare(
+                    "SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id='e1'",
+                )
                 .unwrap();
             let r = s.query_map([], |x| x.get::<_, String>(0)).unwrap();
             r.collect::<Result<_, _>>().unwrap()
@@ -518,7 +519,9 @@ mod tests {
 
         let heads: Vec<String> = {
             let mut s = conn
-                .prepare("SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id='e1'")
+                .prepare(
+                    "SELECT head_hash FROM verisimdb_provenance_chain_heads WHERE entity_id='e1'",
+                )
                 .unwrap();
             let r = s.query_map([], |x| x.get::<_, String>(0)).unwrap();
             r.collect::<Result<_, _>>().unwrap()

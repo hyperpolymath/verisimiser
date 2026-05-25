@@ -60,12 +60,10 @@ fn fork_can_be_written_and_both_branches_persist() {
     let entity = "account:42";
 
     // Genesis, then a normal linear child (branch A) off it.
-    let genesis =
-        append_provenance(&mut conn, entity, "accounts", "insert", "alice", None, None)
-            .expect("genesis append");
-    let _branch_a =
-        append_provenance(&mut conn, entity, "accounts", "update", "alice", None, None)
-            .expect("branch A append (linear, off genesis)");
+    let genesis = append_provenance(&mut conn, entity, "accounts", "insert", "alice", None, None)
+        .expect("genesis append");
+    let _branch_a = append_provenance(&mut conn, entity, "accounts", "update", "alice", None, None)
+        .expect("branch A append (linear, off genesis)");
 
     // A second, partitioned-but-honest writer extends the chain from
     // the SAME genesis tip — a legitimate fork via the explicit API.
@@ -123,8 +121,17 @@ fn each_branch_verifies_independently() {
 
     let genesis = append_provenance(&mut conn, entity, "t", "insert", "a", None, None).unwrap();
     append_provenance(&mut conn, entity, "t", "update", "a", None, None).unwrap();
-    append_provenance_fork(&mut conn, entity, "t", "transform", "b", None, None, &genesis)
-        .unwrap();
+    append_provenance_fork(
+        &mut conn,
+        entity,
+        "t",
+        "transform",
+        "b",
+        None,
+        None,
+        &genesis,
+    )
+    .unwrap();
 
     // Divergence is not tampering: every branch is hash-consistent, so
     // the forked entity must still verify true.

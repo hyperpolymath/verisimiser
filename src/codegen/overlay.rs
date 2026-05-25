@@ -802,8 +802,7 @@ mod tests {
     fn test_sqlite_dialect_seed_and_portable_timestamp() {
         let schema = test_schema();
         let octad = OctadConfig::default();
-        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite)
-            .expect("sqlite ddl");
+        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Sqlite).expect("sqlite ddl");
         assert!(ddl.contains("INSERT OR IGNORE INTO verisimdb_metadata"));
         assert!(
             ddl.contains("CURRENT_TIMESTAMP"),
@@ -820,8 +819,8 @@ mod tests {
     fn test_postgres_dialect_uses_on_conflict_not_or_ignore() {
         let schema = test_schema();
         let octad = OctadConfig::default();
-        let ddl = generate_sidecar_schema(&schema, &octad, SqlDialect::Postgres)
-            .expect("postgres ddl");
+        let ddl =
+            generate_sidecar_schema(&schema, &octad, SqlDialect::Postgres).expect("postgres ddl");
         assert!(
             ddl.contains("ON CONFLICT (table_name) DO NOTHING"),
             "postgres metadata upsert must use ON CONFLICT"
