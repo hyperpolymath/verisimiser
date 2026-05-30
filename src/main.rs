@@ -18,7 +18,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
-use verisimiser::{abi, codegen, doctor, gc, manifest, tier1};
+use verisimiser::{abi, codegen, doctor, gc, manifest, sidecar, tier1};
 
 /// Diagnostic-log rendering. Data output (reports, version, the octad
 /// table) is always written verbatim to stdout regardless of this; this
@@ -209,19 +209,36 @@ fn main() -> Result<()> {
             // Create output directory.
             std::fs::create_dir_all(&output)?;
 
-            // The sidecar DDL dialect follows [sidecar].storage. Any value
-            // other than sqlite/postgres is rejected here (V-L2-F1) instead
-            // of silently emitting SQLite DDL for a non-SQLite store.
-            let dialect = codegen::overlay::SqlDialect::from_storage(&m.sidecar.storage)?;
-
-            // Generate sidecar overlay schema. Errors here surface invalid
-            // table/column identifiers in the parsed schema before they
-            // reach disk.
-            let overlay_ddl =
-                codegen::overlay::generate_sidecar_schema(&schema, &m.octad, dialect)?;
-            let overlay_path = format!("{}/sidecar_schema.sql", output);
-            std::fs::write(&overlay_path, &overlay_ddl)?;
-            tracing::info!(path = %overlay_path, "generated sidecar schema");
+            // The sidecar artifact follows [sidecar].storage (+ format for
+            // json). Unknown values are rejected here (V-L2-F1/F3) instead
+            // of silently emitting SQLite DDL for a non-SQLite store. SQL
+            // backends emit DDL; the json family emits a format-appropriate
+            // scaffold.
+            let storage = sidecar::StorageKind::resolve(&m.sidecar.storage, &m.sidecar.format)?;
+            match storage {
+                sidecar::StorageKind::Sqlite | sidecar::StorageKind::Postgres => {
+                    let dialect = storage
+                        .sql_dialect()
+                        .expect("sqlite/postgres resolve to a SQL dialect");
+                    // Errors here surface invalid table/column identifiers
+                    // in the parsed schema before they reach disk.
+                    let overlay_ddl =
+                        codegen::overlay::generate_sidecar_schema(&schema, &m.octad, dialect)?;
+                    let overlay_path = format!("{}/sidecar_schema.sql", output);
+                    std::fs::write(&overlay_path, &overlay_ddl)?;
+                    tracing::info!(path = %overlay_path, "generated sidecar schema");
+                }
+                sidecar::StorageKind::Json(format) => {
+                    let scaffold = sidecar::json::scaffold(&m.octad, format)?;
+                    let overlay_path = format!("{}/sidecar_schema.{}", output, format.extension());
+                    std::fs::write(&overlay_path, &scaffold)?;
+                    tracing::info!(
+                        path = %overlay_path,
+                        format = format.as_str(),
+                        "generated json sidecar scaffold"
+                    );
+                }
+            }
 
             // Generate query interceptors.
             let interceptors = codegen::query::generate_interceptors(&schema, &m.octad, backend);
@@ -258,27 +275,45 @@ fn main() -> Result<()> {
             threshold,
         } => {
             let m = manifest::load_manifest(&manifest)?;
-            if m.sidecar.storage != "sqlite" {
-                anyhow::bail!(
-                    "verisimiser drift currently only supports the SQLite \
-                     sidecar backend; [sidecar].storage is {:?}",
-                    m.sidecar.storage
-                );
-            }
-            let conn = rusqlite::Connection::open(&m.sidecar.path)?;
-            // Distinct entity_ids that have at least one row in temporal_versions.
-            let mut stmt =
-                conn.prepare("SELECT DISTINCT entity_id FROM verisimdb_temporal_versions")?;
-            let entities: Vec<String> = stmt
-                .query_map([], |r| r.get::<_, String>(0))?
-                .collect::<rusqlite::Result<_>>()?;
+            // Both implemented backends produce the same shape: the count of
+            // entities scanned plus the per-entity temporal-drift reports.
+            let (scanned, reports) =
+                match sidecar::StorageKind::resolve(&m.sidecar.storage, &m.sidecar.format)? {
+                    sidecar::StorageKind::Sqlite => {
+                        let conn = rusqlite::Connection::open(&m.sidecar.path)?;
+                        // Distinct entity_ids with at least one temporal row.
+                        let mut stmt = conn.prepare(
+                            "SELECT DISTINCT entity_id FROM verisimdb_temporal_versions",
+                        )?;
+                        let entities: Vec<String> = stmt
+                            .query_map([], |r| r.get::<_, String>(0))?
+                            .collect::<rusqlite::Result<_>>()?;
+                        let mut reports = Vec::new();
+                        for entity in &entities {
+                            if let Some(r) = tier1::drift::detect_temporal_drift(&conn, entity)? {
+                                reports.push(r);
+                            }
+                        }
+                        (entities.len(), reports)
+                    }
+                    sidecar::StorageKind::Json(format) => {
+                        let store = sidecar::json::JsonStore::open(&m.sidecar.path, format)?;
+                        let entities = store.distinct_temporal_entities();
+                        let reports = entities
+                            .iter()
+                            .filter_map(|e| store.detect_temporal_drift(e))
+                            .collect::<Vec<_>>();
+                        (entities.len(), reports)
+                    }
+                    sidecar::StorageKind::Postgres => anyhow::bail!(
+                        "verisimiser drift supports the sqlite and json sidecar backends; \
+                         [sidecar].storage = \"postgres\" drift is not yet implemented"
+                    ),
+                };
 
             tracing::info!(threshold, "checking temporal drift");
             let mut reported = 0usize;
-            for entity in &entities {
-                let Some(report) = tier1::drift::detect_temporal_drift(&conn, entity)? else {
-                    continue;
-                };
+            for report in &reports {
                 if report.overall_score >= threshold {
                     println!("  {} drift={:.3}", report.entity_id, report.overall_score);
                     reported += 1;
@@ -286,8 +321,8 @@ fn main() -> Result<()> {
             }
             println!(
                 "Scanned {} entit{}; {} above threshold.",
-                entities.len(),
-                if entities.len() == 1 { "y" } else { "ies" },
+                scanned,
+                if scanned == 1 { "y" } else { "ies" },
                 reported
             );
             Ok(())

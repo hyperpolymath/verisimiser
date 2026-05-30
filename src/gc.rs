@@ -39,19 +39,52 @@ impl GcReport {
 }
 
 /// Purge sidecar rows older than the retention bound. `dry_run = true`
-/// reports what would be deleted without changing the DB.
+/// reports what would be deleted without changing the store.
 ///
-/// Returns `Err` if the sidecar storage is not SQLite (unsupported in
-/// this cut) or if the file is unreachable.
+/// Dispatches on the resolved [`StorageKind`](crate::sidecar::StorageKind):
+/// the `sqlite` and `json` (plain/ld/ndjson) backends are implemented;
+/// `postgres` gc is not yet. Returns `Err` for an unsupported storage or an
+/// unreachable store.
 pub fn run_gc(manifest: &Manifest, dry_run: bool) -> Result<GcReport> {
-    if manifest.sidecar.storage != "sqlite" {
-        bail!(
-            "verisimiser gc currently only supports the SQLite sidecar backend; \
-             [sidecar].storage is {:?}",
-            manifest.sidecar.storage
-        );
+    use crate::sidecar::StorageKind;
+    match StorageKind::resolve(&manifest.sidecar.storage, &manifest.sidecar.format)? {
+        StorageKind::Sqlite => run_gc_sqlite(manifest, dry_run),
+        StorageKind::Json(format) => run_gc_json(manifest, dry_run, format),
+        StorageKind::Postgres => bail!(
+            "verisimiser gc supports the sqlite and json sidecar backends; \
+             gc for [sidecar].storage = \"postgres\" is not yet implemented"
+        ),
     }
+}
 
+/// JSON-family gc: load the store, purge in memory, persist iff applying.
+/// The per-dimension semantics (incl. keeping the current temporal version)
+/// live in [`crate::sidecar::json::JsonStore::gc_purge`].
+fn run_gc_json(
+    manifest: &Manifest,
+    dry_run: bool,
+    format: crate::sidecar::JsonFormat,
+) -> Result<GcReport> {
+    let sidecar_path = &manifest.sidecar.path;
+    let mut store = crate::sidecar::json::JsonStore::open(sidecar_path, format)
+        .with_context(|| format!("opening json sidecar at {}", sidecar_path))?;
+    let counts = store.gc_purge(&manifest.retention, dry_run);
+    if !dry_run {
+        store
+            .save()
+            .with_context(|| format!("saving json sidecar at {}", sidecar_path))?;
+    }
+    Ok(GcReport {
+        sidecar: sidecar_path.clone(),
+        dry_run,
+        provenance_deleted: counts.provenance,
+        temporal_deleted: counts.temporal,
+        lineage_deleted: counts.lineage,
+    })
+}
+
+/// SQLite gc (the reference path).
+fn run_gc_sqlite(manifest: &Manifest, dry_run: bool) -> Result<GcReport> {
     let sidecar_path = &manifest.sidecar.path;
     let conn = Connection::open(sidecar_path)
         .with_context(|| format!("opening sidecar at {}", sidecar_path))?;
@@ -148,6 +181,7 @@ mod tests {
         .unwrap();
         m.sidecar = SidecarConfig {
             storage: storage.to_string(),
+            format: "plain".to_string(),
             path: sidecar_path.to_string(),
         };
         m.retention = retention;
@@ -308,12 +342,64 @@ mod tests {
     }
 
     #[test]
-    fn gc_rejects_non_sqlite_backend() {
-        let m = fixture("/dev/null", RetentionConfig::default(), "json");
+    fn gc_rejects_postgres_backend() {
+        let m = fixture("/dev/null", RetentionConfig::default(), "postgres");
         let err = run_gc(&m, true).unwrap_err();
         assert!(
-            err.to_string().contains("only supports the SQLite sidecar"),
-            "expected explicit unsupported-backend error; got: {err}"
+            err.to_string().contains("not yet implemented"),
+            "expected explicit postgres-unsupported error; got: {err}"
         );
+    }
+
+    #[test]
+    fn gc_json_backend_purges_old_rows_and_persists() {
+        use crate::sidecar::JsonFormat;
+        use crate::sidecar::json::{JsonStore, ProvenanceRow, SidecarData, encode};
+
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("sidecar.json");
+        let sidecar_str = sidecar.to_str().unwrap();
+
+        // Seed one aged + one fresh provenance row directly (deterministic
+        // timestamps; the append API always stamps "now").
+        let aged = ProvenanceRow {
+            hash: "old".into(),
+            previous_hash: String::new(),
+            entity_id: "e".into(),
+            table_name: "t".into(),
+            operation: "insert".into(),
+            actor: "a".into(),
+            timestamp: "2020-01-01T00:00:00+00:00".into(),
+            before_snapshot: None,
+            transformation: None,
+        };
+        let fresh = ProvenanceRow {
+            hash: "new".into(),
+            timestamp: "9999-01-01T00:00:00+00:00".into(),
+            ..aged.clone()
+        };
+        let data = SidecarData {
+            provenance_log: vec![aged, fresh],
+            ..Default::default()
+        };
+        std::fs::write(&sidecar, encode(&data, JsonFormat::Plain).unwrap()).unwrap();
+
+        let m = fixture(
+            sidecar_str,
+            RetentionConfig {
+                provenance_days: 30,
+                temporal_days: 30,
+                lineage_days: 30,
+            },
+            "json",
+        );
+        let report = run_gc(&m, false).unwrap();
+        assert_eq!(report.provenance_deleted, 1, "old provenance row purged");
+        assert_eq!(report.total(), 1);
+
+        // The purge was persisted: reopening shows only the fresh row.
+        let reopened = JsonStore::open(&sidecar, JsonFormat::Plain).unwrap();
+        assert_eq!(reopened.data().provenance_log.len(), 1);
+        assert_eq!(reopened.data().provenance_log[0].hash, "new");
     }
 }
