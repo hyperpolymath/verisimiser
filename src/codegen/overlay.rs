@@ -74,6 +74,10 @@ fn must_validate_identifier(name: &str) -> &str {
 /// genuinely dialect-divergent fragment is the metadata upsert
 /// (`INSERT OR IGNORE` vs `INSERT … ON CONFLICT DO NOTHING`), which lives
 /// in the [`sqlite`] / [`postgres`] modules.
+///
+/// [`from_storage`](SqlDialect::from_storage) is the single source of
+/// truth for which `[sidecar].storage` values are accepted; `generate`,
+/// `validate`, and `doctor` all defer to it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SqlDialect {
     Sqlite,
@@ -81,23 +85,24 @@ pub enum SqlDialect {
 }
 
 impl SqlDialect {
-    /// Map a `[sidecar].storage` value to a dialect. `sqlite` →
-    /// [`SqlDialect::Sqlite`]; `postgres`/`postgresql` →
-    /// [`SqlDialect::Postgres`]. `json` and unknown values are rejected
-    /// (the previous behaviour silently emitted SQLite DDL regardless,
-    /// V-L2-F1). The JSON store is tracked separately by #112.
+    /// Map a `[sidecar].storage` value to a dialect (case-insensitive):
+    /// `sqlite` → [`SqlDialect::Sqlite`]; `postgres`/`postgresql` →
+    /// [`SqlDialect::Postgres`]. Every other value is rejected rather than
+    /// silently emitting SQLite DDL regardless of the backend (V-L2-F1).
+    ///
+    /// The octad data layer is intrinsically relational (hash-chains under
+    /// `BEGIN IMMEDIATE`, partial-unique temporal indexes, `CHECK`
+    /// constraints, recursive-CTE lineage acyclicity), so the
+    /// never-implemented `json` document store was dropped rather than
+    /// built (V-L2-F2, #112). It is now an unsupported value like any
+    /// other — no special-casing, no "coming soon" pointer.
     pub fn from_storage(storage: &str) -> anyhow::Result<Self> {
         match storage.to_lowercase().as_str() {
             "sqlite" => Ok(SqlDialect::Sqlite),
             "postgres" | "postgresql" => Ok(SqlDialect::Postgres),
-            "json" => anyhow::bail!(
-                "[sidecar].storage = \"json\" is not implemented (it previously \
-                 emitted SQLite DDL silently). Use \"sqlite\". The JSON sidecar \
-                 store is tracked by hyperpolymath/verisimiser#112."
-            ),
             other => anyhow::bail!(
-                "unknown [sidecar].storage {other:?}; supported: \"sqlite\" \
-                 (\"postgres\" for a PostgreSQL sidecar; \"json\" is #112)."
+                "unsupported [sidecar].storage {other:?}; supported values are \
+                 \"sqlite\" (default) and \"postgres\"/\"postgresql\"."
             ),
         }
     }
@@ -879,10 +884,18 @@ mod tests {
             SqlDialect::from_storage("PostgreSQL").unwrap(),
             SqlDialect::Postgres
         );
+        // V-L2-F2 (#112): the json store was dropped, never implemented. It
+        // is now rejected like any other unsupported value, and the error
+        // advertises only the supported stores — it must NOT imply json is
+        // planned (no "#112" / "not implemented" pointer).
         let json_err = SqlDialect::from_storage("json").unwrap_err().to_string();
         assert!(
-            json_err.contains("not implemented") && json_err.contains("#112"),
-            "json must be rejected with the #112 pointer, got: {json_err}"
+            json_err.contains("unsupported") && json_err.contains("sqlite"),
+            "json must be rejected as an unsupported store, got: {json_err}"
+        );
+        assert!(
+            !json_err.contains("#112") && !json_err.to_lowercase().contains("not implemented"),
+            "the dropped json store must not be advertised as planned, got: {json_err}"
         );
         assert!(SqlDialect::from_storage("mariadb").is_err());
     }
