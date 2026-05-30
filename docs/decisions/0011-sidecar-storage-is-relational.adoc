@@ -1,0 +1,93 @@
+= Architecture Decision Record: 0011-sidecar-storage-is-relational
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 11. The sidecar octad store is relational; drop the JSON backend
+
+Date: 2026-05-30
+
+## Status
+
+Accepted (2026-05-30) — implemented in #144 (json dropped from the storage
+enum, docs, template, and validate/doctor messaging) with test coverage in
+#147. Closes #112 (V-L2-F2). Builds on #45 (V-L2-F1, the per-dialect DDL
+split) and ADR-0004 (octad ontology).
+
+## Context
+
+The manifest's `[sidecar].storage` historically advertised `sqlite | json`,
+but only the SQLite path — and later a PostgreSQL DDL dialect — had code.
+
+* **#45 (V-L2-F1)** split the sidecar DDL by dialect and stopped silently
+  emitting SQLite DDL for a `json` store, rejecting `storage = "json"` at
+  `generate` time with a pointer to #112.
+* **#112 (V-L2-F2)** posed the decision squarely: *implement* a JSON
+  document store mirroring the `verisimdb_*` tables (with the same
+  octad-dimension coverage as the SQLite path, honoured by
+  `generate`/`drift`/`gc`), or *drop* `json` from the schema, docs, and
+  validation.
+
+## Decision
+
+Drop `json`. The supported `[sidecar].storage` set is **closed** to:
+
+* `sqlite` — the reference runtime store, used by `generate`, `drift`, and
+  `gc`; and
+* `postgres` / `postgresql` — a `generate`-time DDL dialect.
+
+`codegen::overlay::SqlDialect::from_storage` is the single source of truth
+for accepted values. `validate`/`doctor` (the `sidecar-storage-supported`
+check) and `generate` all defer to it, so an unsupported store is rejected
+uniformly and up front rather than only at code-generation time, and with no
+"coming soon" pointer.
+
+### Why relational, not document
+
+The octad data layer's correctness rests on invariants that SQL enforces
+*structurally*, and that a JSON document store would have to re-implement in
+application code with weaker guarantees:
+
+* **Provenance** is an append-only hash chain advanced under a
+  `BEGIN IMMEDIATE` write transaction; the multi-head tip set and the
+  duplicate guard are the `hash` PRIMARY KEY plus a non-unique predecessor
+  index (ADR-0010).
+* **Temporal** versioning enforces "exactly one current version per
+  `(entity, table)`" with a partial `UNIQUE` index, and `valid_to >=
+  valid_from` with a `CHECK`.
+* **Lineage** acyclicity begins with a self-edge `CHECK` at the storage
+  layer (ADR-0005).
+* **Closed enums** (`operation`, `derivation_type`, `access_level`,
+  `status`) are `CHECK` constraints; simulation branch parentage is a
+  self-referencing foreign key.
+
+There is also no storage-abstraction layer to host a second *runtime*
+backend — provenance, temporal, drift, and gc are all SQLite-specific — and
+`postgres` itself is already `generate`-only. A half-built JSON store would
+re-introduce exactly the advertised-but-unimplemented surface #45 set out to
+remove.
+
+## Consequences
+
+### Positive
+
+- The advertised configuration surface is honest: every accepted
+  `[sidecar].storage` value has code behind it.
+- One validation path — `validate`, `doctor`, and `generate` cannot
+  disagree on the accepted set.
+- No application-layer re-encoding of invariants the relational engine
+  enforces for free.
+
+### Negative
+
+- No document-store option. Should one be wanted later (e.g. an embedded,
+  dependency-free flat-file deployment), it is a deliberate and larger piece
+  of work: introduce a real storage trait, re-encode every storage-layer
+  invariant listed above against it, and re-add the value to
+  `from_storage`. Until then, `json` is simply another unsupported value.
+
+## References
+
+- Issue #112 (V-L2-F2); issue context from #45 (V-L2-F1).
+- PRs #144 (drop) and #147 (test coverage).
+- ADR-0004 (octad ontology), ADR-0005 (lineage acyclicity),
+  ADR-0010 (provenance forks are first-class).

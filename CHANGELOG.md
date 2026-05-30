@@ -31,6 +31,10 @@ this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0
 - feat(codegen): split sidecar DDL by dialect; reject json sidecar (#45) (#113)
 - feat(provenance): fork-first-class chain model — ADR-0010 (#31; supersedes #32) (#109)
 
+### Removed
+
+- feat(manifest): drop the never-implemented `json` sidecar store; close `[sidecar].storage` to sqlite + postgres and reject unknown values at validate/doctor/generate (V-L2-F2, ADR-0011, closes #112) (#144, #147)
+
 ### Fixed
 
 - fix(rhodibot): automated RSR compliance fixes (#135)

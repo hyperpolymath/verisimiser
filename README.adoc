@@ -239,7 +239,7 @@ temporal-versioning = true    # automatic version history
 drift-detection = true        # cross-modal observer (Constraints symptom)
 
 [tier1.provenance]
-sidecar = "sqlite"            # sqlite | file | verisim
+sidecar = "sqlite"            # sqlite | postgres (V-L2-F2 / ADR-0011)
 sidecar-path = ".verisimiser/provenance.db"
 
 [tier1.temporal]
