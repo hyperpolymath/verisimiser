@@ -20,6 +20,7 @@ this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- feat(sidecar): JSON-family sidecar storage backend — plain JSON / JSON-LD / NDJSON with SQLite-parity octad runtime (provenance incl. forks, temporal, drift, gc); new `[sidecar].format` key and a single `StorageKind::resolve` backend resolver (V-L2-F3, ADR-0012, closes #146) (#148)
 - feat(codegen): split sidecar DDL by dialect; reject json sidecar (#45) (#133)
 - feat(codegen): split sidecar DDL by dialect; reject json sidecar (#45) (#131)
 - feat(logging): tracing diagnostics with --log-format/--log-level (#51) (#124)
@@ -30,10 +31,6 @@ this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0
 - feat(provenance): fork-first-class chain model — ADR-0010 (#31; supersedes #32) (#120)
 - feat(codegen): split sidecar DDL by dialect; reject json sidecar (#45) (#113)
 - feat(provenance): fork-first-class chain model — ADR-0010 (#31; supersedes #32) (#109)
-
-### Removed
-
-- feat(manifest): drop the never-implemented `json` sidecar store; close `[sidecar].storage` to sqlite + postgres and reject unknown values at validate/doctor/generate (V-L2-F2, ADR-0011, closes #112) (#144, #147)
 
 ### Fixed
 

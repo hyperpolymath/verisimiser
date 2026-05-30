@@ -1,0 +1,87 @@
+= Architecture Decision Record: 0012-json-family-sidecar-storage
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 12. Implement the JSON-family sidecar store (supersedes ADR-0011)
+
+Date: 2026-05-31
+
+## Status
+
+Accepted (2026-05-31) — implemented in #148. Closes #146 (V-L2-F3).
+**Supersedes [ADR-0011](0011-sidecar-storage-is-relational.adoc)** (V-L2-F2,
+the json *drop*), reversing it at the maintainer's request.
+
+## Context
+
+ADR-0011 (V-L2-F2, shipped in #144) dropped the never-implemented `json`
+sidecar store on the grounds that the octad runtime is relational and no
+storage-abstraction layer existed to host a second backend. That reasoning
+was sound *at the time*, but it rested on an absence (no abstraction) rather
+than an impossibility.
+
+The maintainer subsequently asked for a real JSON sidecar capability (#146,
+V-L2-F3) — deliberately reversing the drop — scoped as a *family* of on-disk
+encodings with **full parity** to the runtime operations the SQLite path
+implements today.
+
+## Decision
+
+Accept `[sidecar].storage = "json"` again, backed by a real implementation
+(#148):
+
+* **`[sidecar].format`** selects the on-disk encoding — `plain` (default) |
+  `ld` (JSON-LD) | `ndjson`. It is meaningful only for `json` and ignored
+  for `sqlite`/`postgres`.
+* **One resolver.** `sidecar::StorageKind::resolve(storage, format)` is the
+  single source of truth (`Sqlite | Postgres | Json(JsonFormat)`);
+  `SqlDialect::from_storage` is folded into it, and `validate`/`doctor`,
+  `generate`, `drift`, and `gc` all dispatch on it.
+* **Storage abstraction.** A single `SidecarData` model mirrors the
+  `verisimdb_*` tables (provenance log + chain-head set, temporal versions,
+  lineage edges, access policies). **Format is purely a codec** over that
+  model — every octad operation is written once and is format-independent
+  (plain = table→rows object; ld = `@context` + typed `@graph`; ndjson =
+  one record per line). Writes are crash-safe (temp file + atomic rename).
+* **Octad parity.** Provenance (`append`, `append_fork`, `verify_chain`,
+  `fork_points`) reuses `abi::ProvenanceEntry::compute_hash`, so hashing is
+  identical across backends; temporal enforces monotonic versions and the
+  exactly-one-current invariant in code; drift reuses the `tier1` temporal
+  kernel; `gc` purges by age; `generate` emits a
+  `sidecar_schema.{json,jsonld,ndjson}` scaffold instead of SQL DDL.
+
+### Relationship to ADR-0011
+
+ADR-0011's premise — *no abstraction; a JSON store would re-encode
+relational invariants in application code with weaker guarantees* — is
+answered rather than simply contradicted: #148 introduces the abstraction
+(`StorageKind` + the `SidecarData` codec) and re-encodes those invariants in
+Rust with documented parity. The one acknowledged difference is concurrency:
+the JSON store is single-writer (atomic whole-file rewrite) where SQLite
+serialises via `BEGIN IMMEDIATE` locks. The guarantees SQL enforced
+structurally (one current temporal row, monotonic versions, fork-aware
+chains, hash identity) are now enforced in code for the json path and
+covered by tests mirroring the SQLite suite, across all three formats.
+
+## Consequences
+
+### Positive
+
+- `json` / `jsonld` / `ndjson` sidecars with octad parity — human-diffable,
+  portable, dependency-light stores, plus a genuine linked-data (JSON-LD)
+  option.
+- A single backend resolver (`StorageKind::resolve`) for every storage value.
+
+### Negative
+
+- The json path enforces invariants in application code rather than via SQL
+  constraints, so it carries a heavier test burden and a documented
+  single-writer limitation.
+- Two storage families to maintain in lockstep (the hash function is shared
+  via `abi`, which mitigates the highest-risk drift).
+
+## References
+
+- Issue #146 (V-L2-F3); PR #148.
+- Supersedes ADR-0011 (V-L2-F2; issue #112, shipped in #144/#147).
+- ADR-0004 (octad ontology), ADR-0010 (provenance forks are first-class).
