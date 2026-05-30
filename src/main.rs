@@ -329,9 +329,107 @@ fn main() -> Result<()> {
         }
 
         Commands::Provenance { manifest, entity } => {
-            let _m = manifest::load_manifest(&manifest)?;
+            let m = manifest::load_manifest(&manifest)?;
+
+            // Neutral display row shared by both backends.
+            struct ProvRow {
+                hash: String,
+                previous_hash: String,
+                operation: String,
+                actor: String,
+                timestamp: String,
+            }
+
+            let (rows, verified, forks): (Vec<ProvRow>, bool, Vec<tier1::provenance::ForkPoint>) =
+                match sidecar::StorageKind::resolve(&m.sidecar.storage, &m.sidecar.format)? {
+                    sidecar::StorageKind::Sqlite => {
+                        let conn = rusqlite::Connection::open(&m.sidecar.path)?;
+                        let mut stmt = conn.prepare(
+                            "SELECT hash, previous_hash, operation, actor, timestamp \
+                             FROM verisimdb_provenance_log WHERE entity_id = ?1 \
+                             ORDER BY timestamp, hash",
+                        )?;
+                        let rows = stmt
+                            .query_map([entity.as_str()], |r| {
+                                Ok(ProvRow {
+                                    hash: r.get(0)?,
+                                    previous_hash: r.get(1)?,
+                                    operation: r.get(2)?,
+                                    actor: r.get(3)?,
+                                    timestamp: r.get(4)?,
+                                })
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
+                        let verified = tier1::provenance::verify_chain(&conn, &entity)?;
+                        let forks = tier1::provenance::fork_points(&conn, &entity)?;
+                        (rows, verified, forks)
+                    }
+                    sidecar::StorageKind::Json(format) => {
+                        let store = sidecar::json::JsonStore::open(&m.sidecar.path, format)?;
+                        let mut rows: Vec<ProvRow> = store
+                            .data()
+                            .provenance_log
+                            .iter()
+                            .filter(|r| r.entity_id == entity)
+                            .map(|r| ProvRow {
+                                hash: r.hash.clone(),
+                                previous_hash: r.previous_hash.clone(),
+                                operation: r.operation.clone(),
+                                actor: r.actor.clone(),
+                                timestamp: r.timestamp.clone(),
+                            })
+                            .collect();
+                        rows.sort_by(|a, b| {
+                            a.timestamp.cmp(&b.timestamp).then(a.hash.cmp(&b.hash))
+                        });
+                        let verified = store.verify_chain(&entity);
+                        let forks = store.fork_points(&entity);
+                        (rows, verified, forks)
+                    }
+                    sidecar::StorageKind::Postgres => anyhow::bail!(
+                        "verisimiser provenance supports the sqlite and json sidecar \
+                         backends; [sidecar].storage = \"postgres\" is not yet implemented"
+                    ),
+                };
+
             println!("Provenance chain for entity: {}", entity);
-            // TODO: query provenance sidecar
+            if rows.is_empty() {
+                println!("  (no entries)");
+            }
+            for r in &rows {
+                let prev = if r.previous_hash.is_empty() {
+                    "genesis".to_string()
+                } else {
+                    short_hash(&r.previous_hash)
+                };
+                println!(
+                    "  {} <- {}  {:<9} by {:<12} at {}",
+                    short_hash(&r.hash),
+                    prev,
+                    r.operation,
+                    r.actor,
+                    r.timestamp
+                );
+            }
+            println!(
+                "Chain verified: {}",
+                if verified {
+                    "yes"
+                } else {
+                    "NO — tampering or broken link detected"
+                }
+            );
+            if !forks.is_empty() {
+                println!("Fork points (divergent history — ADR-0010):");
+                for f in &forks {
+                    let at = if f.predecessor.is_empty() {
+                        "genesis".to_string()
+                    } else {
+                        short_hash(&f.predecessor)
+                    };
+                    println!("  {} → {} branches", at, f.children);
+                }
+            }
             Ok(())
         }
 
@@ -340,12 +438,144 @@ fn main() -> Result<()> {
             entity,
             at,
         } => {
-            let _m = manifest::load_manifest(&manifest)?;
+            let m = manifest::load_manifest(&manifest)?;
+            let storage = sidecar::StorageKind::resolve(&m.sidecar.storage, &m.sidecar.format)?;
+
             match at {
-                Some(t) => println!("Entity {} at {}", entity, t),
-                None => println!("Full history for entity {}", entity),
+                // Point-in-time: the snapshot current at `t`, per modality.
+                Some(t_str) => {
+                    let t = chrono::DateTime::parse_from_rfc3339(&t_str)
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "--at must be an RFC 3339 timestamp \
+                                 (e.g. 2026-01-02T03:04:05Z): {e}"
+                            )
+                        })?
+                        .with_timezone(&chrono::Utc);
+
+                    let snaps: Vec<(String, Option<String>)> = match storage {
+                        sidecar::StorageKind::Sqlite => {
+                            let conn = rusqlite::Connection::open(&m.sidecar.path)?;
+                            let mut stmt = conn.prepare(
+                                "SELECT DISTINCT table_name FROM verisimdb_temporal_versions \
+                                 WHERE entity_id = ?1 ORDER BY table_name",
+                            )?;
+                            let tables = stmt
+                                .query_map([entity.as_str()], |r| r.get::<_, String>(0))?
+                                .collect::<rusqlite::Result<Vec<_>>>()?;
+                            let mut out = Vec::with_capacity(tables.len());
+                            for table in tables {
+                                let snap = tier1::temporal::read_at(&conn, &entity, &table, &t)?;
+                                out.push((table, snap));
+                            }
+                            out
+                        }
+                        sidecar::StorageKind::Json(format) => {
+                            let store = sidecar::json::JsonStore::open(&m.sidecar.path, format)?;
+                            let mut tables: Vec<String> = store
+                                .data()
+                                .temporal_versions
+                                .iter()
+                                .filter(|r| r.entity_id == entity)
+                                .map(|r| r.table_name.clone())
+                                .collect();
+                            tables.sort();
+                            tables.dedup();
+                            tables
+                                .into_iter()
+                                .map(|table| {
+                                    let snap = store.read_at(&entity, &table, &t);
+                                    (table, snap)
+                                })
+                                .collect()
+                        }
+                        sidecar::StorageKind::Postgres => anyhow::bail!(
+                            "verisimiser history supports the sqlite and json sidecar \
+                             backends; [sidecar].storage = \"postgres\" is not yet implemented"
+                        ),
+                    };
+
+                    println!("Entity {} at {}", entity, t_str);
+                    if snaps.is_empty() {
+                        println!("  (no versions)");
+                    }
+                    for (table, snap) in &snaps {
+                        match snap {
+                            Some(s) => println!("  [{}] {}", table, s),
+                            None => println!("  [{}] (did not exist at this time)", table),
+                        }
+                    }
+                }
+
+                // Full history: every version, per modality.
+                None => {
+                    struct VRow {
+                        table_name: String,
+                        version: u64,
+                        valid_from: String,
+                        valid_to: Option<String>,
+                        operation: String,
+                    }
+                    let rows: Vec<VRow> = match storage {
+                        sidecar::StorageKind::Sqlite => {
+                            let conn = rusqlite::Connection::open(&m.sidecar.path)?;
+                            let mut stmt = conn.prepare(
+                                "SELECT table_name, version, valid_from, valid_to, operation \
+                                 FROM verisimdb_temporal_versions WHERE entity_id = ?1 \
+                                 ORDER BY table_name, version",
+                            )?;
+                            stmt.query_map([entity.as_str()], |r| {
+                                Ok(VRow {
+                                    table_name: r.get(0)?,
+                                    version: r.get::<_, i64>(1)? as u64,
+                                    valid_from: r.get(2)?,
+                                    valid_to: r.get(3)?,
+                                    operation: r.get(4)?,
+                                })
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?
+                        }
+                        sidecar::StorageKind::Json(format) => {
+                            let store = sidecar::json::JsonStore::open(&m.sidecar.path, format)?;
+                            let mut rows: Vec<VRow> = store
+                                .data()
+                                .temporal_versions
+                                .iter()
+                                .filter(|r| r.entity_id == entity)
+                                .map(|r| VRow {
+                                    table_name: r.table_name.clone(),
+                                    version: r.version,
+                                    valid_from: r.valid_from.clone(),
+                                    valid_to: r.valid_to.clone(),
+                                    operation: r.operation.clone(),
+                                })
+                                .collect();
+                            rows.sort_by(|a, b| {
+                                a.table_name
+                                    .cmp(&b.table_name)
+                                    .then(a.version.cmp(&b.version))
+                            });
+                            rows
+                        }
+                        sidecar::StorageKind::Postgres => anyhow::bail!(
+                            "verisimiser history supports the sqlite and json sidecar \
+                             backends; [sidecar].storage = \"postgres\" is not yet implemented"
+                        ),
+                    };
+
+                    println!("Full history for entity {}", entity);
+                    if rows.is_empty() {
+                        println!("  (no versions)");
+                    }
+                    for r in &rows {
+                        let to = r.valid_to.as_deref().unwrap_or("current");
+                        println!(
+                            "  [{}] v{} {} .. {}  ({})",
+                            r.table_name, r.version, r.valid_from, to, r.operation
+                        );
+                    }
+                }
             }
-            // TODO: query temporal sidecar
             Ok(())
         }
 
@@ -449,6 +679,16 @@ fn emit_report(report: &manifest::ValidationReport, json: bool, kind: &str) -> R
         Ok(())
     } else {
         anyhow::bail!("{} failed", kind);
+    }
+}
+
+/// Truncate a long hash for human-readable display (provenance hashes are
+/// 64 hex chars). Short strings are returned unchanged.
+fn short_hash(hash: &str) -> String {
+    if hash.len() > 12 {
+        format!("{}…", &hash[..12])
+    } else {
+        hash.to_string()
     }
 }
 

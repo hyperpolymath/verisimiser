@@ -8,6 +8,27 @@ All notable changes to verisimiser will be documented in this file.
 This format is based on https://keepachangelog.com/en/1.1.0/[Keep a Changelog],
 and this project adheres to https://semver.org/spec/v2.0.0.html[Semantic Versioning].
 
+== [0.2.0] - 2026-05-30
+
+=== Added
+* JSON-family sidecar storage backend (`[sidecar].storage = "json"`) with a
+  `[sidecar].format` key — `plain` | `ld` (JSON-LD) | `ndjson` — at full
+  runtime parity with the SQLite path: hash-chained provenance (incl. forks),
+  temporal versioning, drift, and gc (#146, V-L2-F3).
+* `sidecar::StorageKind` — single source of truth resolving
+  `[sidecar].storage` (+ `format`) to a backend; `validate`/`generate`/
+  `drift`/`gc` all defer to it.
+* Cross-process write locking for the JSON sidecar (advisory `<path>.lock`
+  with stale-steal) plus documented atomic-rename durability (#150, V-L2-F4).
+* `provenance <entity>` and `history <entity> [--at <RFC3339>]` CLI
+  subcommands now query the sidecar (sqlite + json) instead of stubbing
+  (#150, V-L2-F4).
+* `examples/json-sidecar/` manifest demonstrating the NDJSON sidecar.
+
+=== Changed
+* `verisimiser generate` emits a `sidecar_schema.{json,jsonld,ndjson}`
+  scaffold for the json family (SQL backends still emit DDL).
+
 == [0.1.0] - 2026-03-21
 
 === Phase 1 — RSR Compliance Sweep

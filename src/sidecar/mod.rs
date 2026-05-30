@@ -15,6 +15,7 @@
 // SQLite path implements today. The JSON store itself lives in [`json`].
 
 pub mod json;
+pub mod lock;
 
 use crate::codegen::overlay::SqlDialect;
 

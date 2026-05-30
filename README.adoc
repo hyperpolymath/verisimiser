@@ -266,6 +266,55 @@ The `verisimiser octad` subcommand prints the active concerns from your
 manifest; `verisimiser doctor` checks that sidecars, thresholds, and
 retention bounds are configured consistently.
 
+=== Sidecar storage backends (Phase 1 schema)
+
+The Phase 1 manifest uses a single `[sidecar]` section. All octad data
+(provenance log, temporal versions, lineage edges, access policies) lives
+in one sidecar store — never in your target database:
+
+[source,toml]
+----
+[sidecar]
+# storage backend: "sqlite" (default), "postgres"/"postgresql", or "json"
+storage = "json"
+# json on-disk encoding (ignored for sql backends): "plain" | "ld" | "ndjson"
+format  = "ndjson"
+path    = ".verisim/sidecar.ndjson"
+----
+
+* **sqlite** (default) — the reference store; embedded and transactional.
+* **postgres** — the same overlay schema, emitted as PostgreSQL DDL by `generate`.
+* **json** — an append-only document store mirroring the `verisimdb_*` tables,
+  in one of three encodings:
++
+--
+** **plain** — one JSON object keyed by table name.
+** **ld** — JSON-LD (`@context` + a `@graph` of typed, `@id`-addressed nodes), for linked-data tooling.
+** **ndjson** — newline-delimited JSON, one record per line.
+--
+
+The JSON store has full parity with the SQLite runtime path: hash-chained
+provenance (including first-class forks), temporal versioning, drift, and
+gc. Writes are crash-safe (atomic temp-file + `rename`) and serialised
+across processes by an advisory lock file (`<path>.lock`).
+
+[cols="2,1,1,1",options="header"]
+|===
+| Command | sqlite | postgres | json
+
+| `generate`               | DDL | DDL | scaffold
+| `provenance` / `history` | ✓   | —   | ✓
+| `drift` / `gc`           | ✓   | —   | ✓
+|===
+
+`generate` writes `sidecar_schema.sql` for SQL backends and a
+`sidecar_schema.{json,jsonld,ndjson}` scaffold for the json family.
+`verisimiser provenance <entity>` prints the entity's chain and its
+verification status (plus any fork points); `verisimiser history <entity>
+[--at <RFC3339>]` lists temporal versions, or the point-in-time snapshot per
+modality. PostgreSQL *runtime* reads (`provenance`/`history`/`drift`/`gc`)
+are not yet implemented and refuse explicitly rather than silently no-op.
+
 == Architecture
 
 [source]

@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+= JSON sidecar example
+
+Demonstrates the JSON-family sidecar backend (V-L2-F3/F4): `[sidecar].storage
+= "json"` with `format = "ndjson"`. The octad data (provenance, temporal,
+lineage, access policies) is stored as an append-only NDJSON document store
+mirroring the `verisimdb_*` tables, with the same runtime parity as SQLite —
+hash-chained provenance, temporal versioning, drift, and gc.
+
+[source,sh]
+----
+# Validate the manifest (checks storage + format resolve):
+verisimiser validate -m examples/json-sidecar/verisimiser.toml
+
+# Emit the JSON sidecar scaffold:
+verisimiser generate -m examples/json-sidecar/verisimiser.toml -o .verisim
+
+# After data accrues, query it:
+verisimiser provenance -m examples/json-sidecar/verisimiser.toml <entity-id>
+verisimiser history    -m examples/json-sidecar/verisimiser.toml <entity-id> --at 2026-01-01T00:00:00Z
+verisimiser gc         -m examples/json-sidecar/verisimiser.toml --dry-run
+----
+
+Set `format` to `"ld"` for JSON-LD (`@context` + `@graph`) or `"plain"` for a
+single keyed JSON object. Writes are crash-safe (atomic rename) and serialised
+across processes by a `<path>.lock` advisory lock.
