@@ -309,7 +309,10 @@ mod tests {
 
     #[test]
     fn gc_rejects_non_sqlite_backend() {
-        let m = fixture("/dev/null", RetentionConfig::default(), "json");
+        // `postgres` is a valid generate-time dialect, but gc is SQLite-only
+        // and must refuse rather than silently no-op. (The `json` value was
+        // dropped as a storage option entirely in V-L2-F2 / #112.)
+        let m = fixture("/dev/null", RetentionConfig::default(), "postgres");
         let err = run_gc(&m, true).unwrap_err();
         assert!(
             err.to_string().contains("only supports the SQLite sidecar"),
