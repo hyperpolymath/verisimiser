@@ -57,8 +57,10 @@ relational invariants in application code with weaker guarantees* — is
 answered rather than simply contradicted: #148 introduces the abstraction
 (`StorageKind` + the `SidecarData` codec) and re-encodes those invariants in
 Rust with documented parity. The one acknowledged difference is concurrency:
-the JSON store is single-writer (atomic whole-file rewrite) where SQLite
-serialises via `BEGIN IMMEDIATE` locks. The guarantees SQL enforced
+the JSON store serialises writers itself — single-writer-by-assumption as of
+F3, and since V-L2-F4 (#151, ADR-0013) via a cross-process advisory lock held
+across the whole load→mutate→save cycle — where SQLite serialises via
+`BEGIN IMMEDIATE` locks. The guarantees SQL enforced
 structurally (one current temporal row, monotonic versions, fork-aware
 chains, hash identity) are now enforced in code for the json path and
 covered by tests mirroring the SQLite suite, across all three formats.
@@ -75,8 +77,9 @@ covered by tests mirroring the SQLite suite, across all three formats.
 ### Negative
 
 - The json path enforces invariants in application code rather than via SQL
-  constraints, so it carries a heavier test burden and a documented
-  single-writer limitation.
+  constraints, so it carries a heavier test burden. (The single-writer
+  constraint noted here was subsequently hardened into a cross-process
+  advisory lock by V-L2-F4 — see ADR-0013.)
 - Two storage families to maintain in lockstep (the hash function is shared
   via `abi`, which mitigates the highest-risk drift).
 

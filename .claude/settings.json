@@ -13,6 +13,10 @@
       "Bash(cargo clippy:*)",
       "Bash(cargo fmt:*)",
       "Bash(cargo fetch:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git remote:*)",
       "mcp__github__pull_request_read",
       "mcp__github__issue_read",
       "mcp__github__list_pull_requests"
