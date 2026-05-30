@@ -343,6 +343,9 @@ mod tests {
 
     #[test]
     fn gc_rejects_postgres_backend() {
+        // `postgres` is a valid generate-time dialect, but gc is not yet
+        // implemented for it and must refuse rather than silently no-op.
+        // (The json family *is* now supported — see the json gc test below.)
         let m = fixture("/dev/null", RetentionConfig::default(), "postgres");
         let err = run_gc(&m, true).unwrap_err();
         assert!(

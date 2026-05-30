@@ -431,6 +431,42 @@ mod validate_manifest_tests {
         );
     }
 
+    /// Complements the failure cases: the PostgreSQL dialect is a supported
+    /// `[sidecar].storage` value (it selects the postgres DDL for
+    /// `generate`), so a postgres sidecar must *pass* the
+    /// `sidecar-storage-supported` check and validate cleanly.
+    #[test]
+    fn postgres_storage_passes_storage_check() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("verisimiser.toml");
+        let sidecar_path = dir.path().join("sidecar.db");
+        let body = format!(
+            "[project]\n\
+             name = \"test\"\n\
+             [database]\n\
+             backend = \"postgresql\"\n\
+             [sidecar]\n\
+             storage = \"postgres\"\n\
+             path = \"{}\"\n",
+            sidecar_path.display().to_string().replace('\\', "/")
+        );
+        std::fs::write(&path, body).expect("write");
+
+        let report = validate_manifest(path.to_str().unwrap());
+        assert!(
+            report.passed,
+            "postgres storage must validate; checks: {:?}",
+            report.checks
+        );
+        assert!(
+            report
+                .checks
+                .iter()
+                .any(|c| c.name == "sidecar-storage-supported" && c.passed),
+            "the storage-supported check must run and pass for postgres"
+        );
+    }
+
     /// A bad `[sidecar].format` for the json store, and an unknown storage
     /// backend, must each fail `sidecar-storage-supported`.
     #[test]
