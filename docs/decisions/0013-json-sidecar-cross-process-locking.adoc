@@ -1,0 +1,75 @@
+= Architecture Decision Record: 0013-json-sidecar-cross-process-locking
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 13. Cross-process locking + atomic writes for the JSON sidecar
+
+Date: 2026-05-31
+
+## Status
+
+Accepted (2026-05-31) — implemented in #151. Closes #150 (V-L2-F4).
+**Refines [ADR-0012](0012-json-family-sidecar-storage.adoc)** (V-L2-F3): it
+does not reverse the JSON-family decision, it hardens its concurrency story.
+
+## Context
+
+ADR-0012 implemented the JSON-family sidecar with crash-safe writes
+(temp file + same-directory atomic `rename`) but a **single-writer-by-
+assumption** concurrency model: it noted that the SQLite path serialises
+writers via the database write lock, whereas the JSON path assumed one
+writer at a time. Two processes that each ran the load→mutate→save cycle
+against the same sidecar could interleave and silently lose writes — a real
+hazard for `gc` running alongside an appending process.
+
+The `provenance` and `history` CLI subcommands were also still stubs, so the
+JSON (and SQLite) sidecars could be written but not yet *queried* from the
+CLI.
+
+## Decision
+
+Harden the JSON store and wire the read-side CLI (#151):
+
+* **Cross-process advisory write lock.** A dependency-free lock file
+  (`<path>.lock`) is created exclusively, with bounded backoff and a
+  stale-lock *steal* heuristic, and released via RAII on drop. It is held
+  across the **entire** load→mutate→save cycle, so a concurrent `gc` and
+  `append` serialise instead of clobbering each other. (`src/sidecar/lock.rs`.)
+* **Atomic durability, formalised.** The temp-file + same-directory `rename`
+  in `save()` is documented as the durability boundary and is now performed
+  under the write lock.
+* **`provenance` / `history` wired.** `provenance <entity>` lists the chain
+  and reports `verify_chain` plus any fork points; `history <entity>
+  [--at T]` lists temporal versions (or the point-in-time snapshot at `T`).
+  Both work against the SQLite *and* JSON backends; `postgres` reads remain
+  an explicit "not yet implemented".
+* **Release.** Version `0.1.0` → `0.2.0`, with a CHANGELOG entry.
+
+## Consequences
+
+### Positive
+
+- Concurrent cross-process writers to a JSON sidecar are safe: serialised by
+  the advisory lock and crash-safe via atomic rename. This closes the main
+  parity gap ADR-0012 called out against the SQLite store.
+- No new dependencies — the lock is built on the standard library.
+- `provenance` and `history` now function against real sidecars, for both
+  storage families.
+
+### Negative
+
+- The lock is **advisory** (cooperative) with a stale-steal heuristic: a
+  writer wedged past the staleness window can have its lock stolen. This is
+  the documented trade-off of a dependency-free, portable lock.
+- Writes remain whole-file `O(n)` rewrites (no incremental append for the
+  JSON encodings) — acceptable for the small-to-medium sidecars this store
+  targets, but not for very large histories.
+- `postgres` provenance/history reads are still unimplemented (tracked
+  separately).
+
+## References
+
+- Issue #150 (V-L2-F4); PR #151.
+- Refines ADR-0012 (V-L2-F3, the JSON-family backend; issue #146 / #148).
+- ADR-0010 (provenance forks are first-class) — the chain semantics the
+  JSON store mirrors.

@@ -20,6 +20,7 @@ this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- feat(sidecar): cross-process advisory write locking + atomic-rename durability for the JSON sidecar, and wire the `provenance`/`history` CLI subcommands against sqlite + json sidecars (V-L2-F4, ADR-0013, closes #150) (#151)
 - feat(sidecar): JSON-family sidecar storage backend — plain JSON / JSON-LD / NDJSON with SQLite-parity octad runtime (provenance incl. forks, temporal, drift, gc); new `[sidecar].format` key and a single `StorageKind::resolve` backend resolver (V-L2-F3, ADR-0012, closes #146) (#148)
 - feat(codegen): split sidecar DDL by dialect; reject json sidecar (#45) (#133)
 - feat(codegen): split sidecar DDL by dialect; reject json sidecar (#45) (#131)
