@@ -8,10 +8,19 @@ Date: 2026-05-30
 
 ## Status
 
-Accepted (2026-05-30) — implemented in #144 (json dropped from the storage
-enum, docs, template, and validate/doctor messaging) with test coverage in
-#147. Closes #112 (V-L2-F2). Builds on #45 (V-L2-F1, the per-dialect DDL
-split) and ADR-0004 (octad ontology).
+**Superseded by [ADR-0012](0012-json-family-sidecar-storage.adoc)
+(V-L2-F3, #146 / #148).**
+
+Originally Accepted (2026-05-30) and shipped as the V-L2-F2 drop — #144,
+test coverage in #147, closing #112. It was then reversed *within the same
+development cycle* by V-L2-F3 (#146), which re-opened and **implemented** the
+JSON sidecar capability as a deliberately-scoped family (plain / JSON-LD /
+NDJSON) at the maintainer's request. The "no storage-abstraction layer /
+relational-only" premise below no longer holds: #148 introduced
+`sidecar::StorageKind` and a format-independent `SidecarData` codec. This ADR
+is retained as the historical record of the F2 decision; see ADR-0012 for the
+current state. Builds on #45 (V-L2-F1, the per-dialect DDL split) and
+ADR-0004 (octad ontology).
 
 ## Context
 
