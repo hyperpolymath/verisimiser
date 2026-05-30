@@ -281,11 +281,19 @@ mod octad_tests {
 pub struct SidecarConfig {
     /// Storage backend for the sidecar. `"sqlite"` (default) is the
     /// reference store; `"postgres"`/`"postgresql"` selects the PostgreSQL
-    /// DDL dialect. Any other value is rejected at `validate` and
-    /// `generate` time by `codegen::overlay::SqlDialect::from_storage`,
+    /// DDL dialect; `"json"` selects the JSON-family document store (see
+    /// [`format`](SidecarConfig::format)). Resolved — and any other value
+    /// rejected — at `validate`/`generate` time by
+    /// [`sidecar::StorageKind::resolve`](crate::sidecar::StorageKind::resolve),
     /// the single source of truth for supported stores.
     #[serde(default = "default_sidecar_storage")]
     pub storage: String,
+
+    /// On-disk encoding for the `json` store: `"plain"` (default),
+    /// `"ld"` (JSON-LD), or `"ndjson"`. Ignored for `sqlite`/`postgres`.
+    /// V-L2-F3 (#146).
+    #[serde(default = "default_sidecar_format")]
+    pub format: String,
 
     /// File path for the sidecar database.
     #[serde(default = "default_sidecar_path")]
@@ -330,6 +338,7 @@ impl Default for SidecarConfig {
     fn default() -> Self {
         Self {
             storage: default_sidecar_storage(),
+            format: default_sidecar_format(),
             path: default_sidecar_path(),
         }
     }
@@ -394,14 +403,13 @@ mod validate_manifest_tests {
         assert_eq!(failed, vec!["schema-source-exists"]);
     }
 
-    /// An unsupported `[sidecar].storage` (here the dropped `json` store,
-    /// V-L2-F2 / #112) must fail `sidecar-storage-supported`, and the
-    /// failure detail must not advertise json as a planned option.
+    /// `storage = "json"` (with a valid format) now *passes* validation —
+    /// the JSON family is supported again (V-L2-F3 / #146).
     #[test]
-    fn unsupported_storage_fails() {
+    fn json_storage_with_valid_format_passes() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("verisimiser.toml");
-        let sidecar_path = dir.path().join("sidecar.db");
+        let sidecar_path = dir.path().join("sidecar.ndjson");
         let body = format!(
             "[project]\n\
              name = \"test\"\n\
@@ -409,28 +417,22 @@ mod validate_manifest_tests {
              backend = \"sqlite\"\n\
              [sidecar]\n\
              storage = \"json\"\n\
+             format = \"ndjson\"\n\
              path = \"{}\"\n",
             sidecar_path.display().to_string().replace('\\', "/")
         );
         std::fs::write(&path, body).expect("write");
 
         let report = validate_manifest(path.to_str().unwrap());
-        assert!(!report.passed);
-        let storage = report
-            .checks
-            .iter()
-            .find(|c| c.name == "sidecar-storage-supported")
-            .expect("storage check must run");
-        assert!(!storage.passed, "json storage must fail the check");
-        let detail = storage.detail.as_deref().unwrap_or_default();
         assert!(
-            detail.contains("unsupported") && !detail.contains("#112"),
-            "detail must reject json plainly without a 'coming soon' pointer; got: {detail}"
+            report.passed,
+            "json+ndjson must validate; checks: {:?}",
+            report.checks
         );
     }
 
-    /// Complements `unsupported_storage_fails`: the PostgreSQL dialect is a
-    /// supported `[sidecar].storage` value (it selects the postgres DDL for
+    /// Complements the failure cases: the PostgreSQL dialect is a supported
+    /// `[sidecar].storage` value (it selects the postgres DDL for
     /// `generate`), so a postgres sidecar must *pass* the
     /// `sidecar-storage-supported` check and validate cleanly.
     #[test]
@@ -463,6 +465,40 @@ mod validate_manifest_tests {
                 .any(|c| c.name == "sidecar-storage-supported" && c.passed),
             "the storage-supported check must run and pass for postgres"
         );
+    }
+
+    /// A bad `[sidecar].format` for the json store, and an unknown storage
+    /// backend, must each fail `sidecar-storage-supported`.
+    #[test]
+    fn bad_format_and_unknown_storage_fail() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let storage_check = |toml: &str| {
+            let path = dir.path().join("verisimiser.toml");
+            std::fs::write(&path, toml).expect("write");
+            let report = validate_manifest(path.to_str().unwrap());
+            report
+                .checks
+                .into_iter()
+                .find(|c| c.name == "sidecar-storage-supported")
+                .expect("storage check must run")
+        };
+
+        let bad_format = storage_check(
+            "[database]\nbackend = \"sqlite\"\n\
+             [sidecar]\nstorage = \"json\"\nformat = \"yaml\"\n",
+        );
+        assert!(!bad_format.passed);
+        assert!(
+            bad_format
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("format")
+        );
+
+        let unknown =
+            storage_check("[database]\nbackend = \"sqlite\"\n[sidecar]\nstorage = \"mariadb\"\n");
+        assert!(!unknown.passed);
     }
 
     /// A malformed manifest must fail `manifest-loads` and stop further
@@ -604,6 +640,9 @@ fn default_connection_env() -> String {
 fn default_sidecar_storage() -> String {
     "sqlite".to_string()
 }
+fn default_sidecar_format() -> String {
+    "plain".to_string()
+}
 fn default_sidecar_path() -> String {
     ".verisim/sidecar.db".to_string()
 }
@@ -692,8 +731,10 @@ enable-constraints = {enable_constraints}
 enable-simulation = {enable_simulation}
 
 [sidecar]
-# storage backend: "sqlite" (default) or "postgres"/"postgresql"
+# storage backend: "sqlite" (default), "postgres"/"postgresql", or "json"
 storage = "{sidecar_storage}"
+# json on-disk encoding (ignored for sql backends): "plain" | "ld" | "ndjson"
+format = "{sidecar_format}"
 path = "{sidecar_path}"
 
 [retention]
@@ -711,6 +752,7 @@ lineage-days    = {lineage_days}
         enable_constraints = octad.enable_constraints,
         enable_simulation = octad.enable_simulation,
         sidecar_storage = sidecar.storage,
+        sidecar_format = sidecar.format,
         sidecar_path = sidecar.path,
         provenance_days = retention.provenance_days,
         temporal_days = retention.temporal_days,
@@ -806,9 +848,10 @@ impl ValidationReport {
 ///    set, the file at that path is readable.
 /// 3. **`sidecar-path-writable`** — the parent directory of
 ///    `[sidecar].path` is writable (or createable).
-/// 4. **`sidecar-storage-supported`** — `[sidecar].storage` names a
-///    backend `codegen` can emit (`sqlite`/`postgres`). Catches typos and
-///    the dropped `json` store (V-L2-F2 / #112).
+/// 4. **`sidecar-storage-supported`** — `[sidecar].storage` (+ `format`
+///    for the json store) names a backend the tool supports
+///    (`sqlite`/`postgres`/`json` with `format` ∈ plain|ld|ndjson).
+///    Catches typos before codegen. (V-L2-F3 / #146.)
 ///
 /// Out of scope here: V-L2-E1 backend/target_db conflict (own issue),
 /// target-DB reachability (needs live connection).
@@ -896,19 +939,19 @@ pub fn validate_manifest(path: &str) -> ValidationReport {
             });
         }
 
-        // 4. Sidecar storage backend is supported. Delegates to the one
-        // validator (`SqlDialect::from_storage`) so `validate`/`doctor`
-        // and `generate` agree on the accepted set. This is where a typo'd
-        // or dropped backend (e.g. the never-implemented `json` store,
-        // V-L2-F2 / #112) is surfaced before it reaches codegen.
+        // 4. Sidecar storage backend (+ json format) is supported.
+        // Delegates to the one resolver (`sidecar::StorageKind::resolve`) so
+        // `validate`/`doctor` and `generate` agree on the accepted set. This
+        // is where a typo'd backend, or a bad `[sidecar].format` for the
+        // json store (V-L2-F3 / #146), is surfaced before it reaches codegen.
         let storage_check = ValidationCheck {
             name: "sidecar-storage-supported".to_string(),
-            description: "[sidecar].storage names a supported backend".to_string(),
+            description: "[sidecar].storage (+ format) names a supported backend".to_string(),
             passed: true,
             detail: None,
         };
         checks.push(
-            match crate::codegen::overlay::SqlDialect::from_storage(&m.sidecar.storage) {
+            match crate::sidecar::StorageKind::resolve(&m.sidecar.storage, &m.sidecar.format) {
                 Ok(_) => storage_check,
                 Err(e) => ValidationCheck {
                     passed: false,

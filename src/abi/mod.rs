@@ -460,8 +460,12 @@ impl AccessPolicy {
 /// with validation and path resolution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SidecarConfig {
-    /// Storage backend: "sqlite" (default) or "postgres"/"postgresql".
+    /// Storage backend: "sqlite" (default), "postgres"/"postgresql", or
+    /// "json" (see `format`).
     pub storage: String,
+    /// On-disk encoding for the `json` store: "plain" (default), "ld"
+    /// (JSON-LD), or "ndjson". Ignored for sql backends. V-L2-F3 (#146).
+    pub format: String,
     /// File path for the sidecar database.
     pub path: String,
 }
@@ -471,6 +475,7 @@ impl SidecarConfig {
     pub fn default_sqlite() -> Self {
         Self {
             storage: "sqlite".to_string(),
+            format: "plain".to_string(),
             path: ".verisim/sidecar.db".to_string(),
         }
     }

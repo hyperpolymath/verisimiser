@@ -13,6 +13,7 @@ pub mod doctor;
 pub mod gc;
 pub mod intercept;
 pub mod manifest;
+pub mod sidecar;
 pub mod tier1;
 pub mod tier2;
 
