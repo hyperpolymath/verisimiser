@@ -460,7 +460,7 @@ impl AccessPolicy {
 /// with validation and path resolution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SidecarConfig {
-    /// Storage backend: "sqlite" or "json".
+    /// Storage backend: "sqlite" (default) or "postgres"/"postgresql".
     pub storage: String,
     /// File path for the sidecar database.
     pub path: String,

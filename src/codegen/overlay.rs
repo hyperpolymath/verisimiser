@@ -83,21 +83,29 @@ pub enum SqlDialect {
 impl SqlDialect {
     /// Map a `[sidecar].storage` value to a dialect. `sqlite` →
     /// [`SqlDialect::Sqlite`]; `postgres`/`postgresql` →
-    /// [`SqlDialect::Postgres`]. `json` and unknown values are rejected
-    /// (the previous behaviour silently emitted SQLite DDL regardless,
-    /// V-L2-F1). The JSON store is tracked separately by #112.
+    /// [`SqlDialect::Postgres`]. Every other value is rejected rather than
+    /// silently emitting SQLite DDL regardless of the configured store
+    /// (V-L2-F1).
+    ///
+    /// This is the single source of truth for "is this a supported sidecar
+    /// storage value?": [`crate::manifest::validate_manifest`] calls it so
+    /// `validate`, `doctor`, and `generate` cannot disagree on the closed
+    /// set.
+    ///
+    /// V-L2-F2 (#112): a JSON sidecar store was evaluated here and dropped
+    /// rather than implemented. There is no storage-abstraction layer to
+    /// host a second runtime backend yet (provenance, temporal, drift, and
+    /// gc are all SQLite-specific), so leaving it advertised-but-rejected
+    /// was worse than removing it. If a flat-file store is wanted later it
+    /// should be designed against a real storage trait and re-added to this
+    /// match — until then it is just another unsupported value.
     pub fn from_storage(storage: &str) -> anyhow::Result<Self> {
         match storage.to_lowercase().as_str() {
             "sqlite" => Ok(SqlDialect::Sqlite),
             "postgres" | "postgresql" => Ok(SqlDialect::Postgres),
-            "json" => anyhow::bail!(
-                "[sidecar].storage = \"json\" is not implemented (it previously \
-                 emitted SQLite DDL silently). Use \"sqlite\". The JSON sidecar \
-                 store is tracked by hyperpolymath/verisimiser#112."
-            ),
             other => anyhow::bail!(
-                "unknown [sidecar].storage {other:?}; supported: \"sqlite\" \
-                 (\"postgres\" for a PostgreSQL sidecar; \"json\" is #112)."
+                "unsupported [sidecar].storage {other:?}; supported backends \
+                 are \"sqlite\" (default) and \"postgres\"/\"postgresql\"."
             ),
         }
     }
@@ -879,10 +887,18 @@ mod tests {
             SqlDialect::from_storage("PostgreSQL").unwrap(),
             SqlDialect::Postgres
         );
+        // V-L2-F2 (#112): the JSON store was dropped, not implemented, so
+        // `json` is now rejected exactly like any other unsupported value —
+        // no special-case "coming soon" text and no #112 pointer.
         let json_err = SqlDialect::from_storage("json").unwrap_err().to_string();
         assert!(
-            json_err.contains("not implemented") && json_err.contains("#112"),
-            "json must be rejected with the #112 pointer, got: {json_err}"
+            json_err.contains("unsupported") && json_err.contains("sqlite"),
+            "json must be rejected as unsupported and list the supported \
+             backends, got: {json_err}"
+        );
+        assert!(
+            !json_err.contains("#112") && !json_err.contains("not implemented"),
+            "a dropped backend must not be advertised as tracked/coming, got: {json_err}"
         );
         assert!(SqlDialect::from_storage("mariadb").is_err());
     }
