@@ -279,11 +279,11 @@ mod octad_tests {
 /// temporal versions, and access policies. It never writes to your target database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SidecarConfig {
-    /// Storage backend for the sidecar. `"sqlite"` (default) is the only
-    /// implemented store; `"postgres"`/`"postgresql"` selects the
-    /// PostgreSQL DDL dialect. `"json"` is **not implemented** and is
-    /// rejected at `generate` time — tracked by #112 (V-L2-F2). The
-    /// dialect mapping lives in `codegen::overlay::SqlDialect`.
+    /// Storage backend for the sidecar. `"sqlite"` (default) is the
+    /// reference store; `"postgres"`/`"postgresql"` selects the PostgreSQL
+    /// DDL dialect. Any other value is rejected at `validate` and
+    /// `generate` time by `codegen::overlay::SqlDialect::from_storage`,
+    /// the single source of truth for supported stores.
     #[serde(default = "default_sidecar_storage")]
     pub storage: String,
 
@@ -392,6 +392,41 @@ mod validate_manifest_tests {
             .map(|c| c.name.as_str())
             .collect();
         assert_eq!(failed, vec!["schema-source-exists"]);
+    }
+
+    /// An unsupported `[sidecar].storage` (here the dropped `json` store,
+    /// V-L2-F2 / #112) must fail `sidecar-storage-supported`, and the
+    /// failure detail must not advertise json as a planned option.
+    #[test]
+    fn unsupported_storage_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("verisimiser.toml");
+        let sidecar_path = dir.path().join("sidecar.db");
+        let body = format!(
+            "[project]\n\
+             name = \"test\"\n\
+             [database]\n\
+             backend = \"sqlite\"\n\
+             [sidecar]\n\
+             storage = \"json\"\n\
+             path = \"{}\"\n",
+            sidecar_path.display().to_string().replace('\\', "/")
+        );
+        std::fs::write(&path, body).expect("write");
+
+        let report = validate_manifest(path.to_str().unwrap());
+        assert!(!report.passed);
+        let storage = report
+            .checks
+            .iter()
+            .find(|c| c.name == "sidecar-storage-supported")
+            .expect("storage check must run");
+        assert!(!storage.passed, "json storage must fail the check");
+        let detail = storage.detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains("unsupported") && !detail.contains("#112"),
+            "detail must reject json plainly without a 'coming soon' pointer; got: {detail}"
+        );
     }
 
     /// A malformed manifest must fail `manifest-loads` and stop further
@@ -621,6 +656,7 @@ enable-constraints = {enable_constraints}
 enable-simulation = {enable_simulation}
 
 [sidecar]
+# storage backend: "sqlite" (default) or "postgres"/"postgresql"
 storage = "{sidecar_storage}"
 path = "{sidecar_path}"
 
@@ -734,6 +770,9 @@ impl ValidationReport {
 ///    set, the file at that path is readable.
 /// 3. **`sidecar-path-writable`** — the parent directory of
 ///    `[sidecar].path` is writable (or createable).
+/// 4. **`sidecar-storage-supported`** — `[sidecar].storage` names a
+///    backend `codegen` can emit (`sqlite`/`postgres`). Catches typos and
+///    the dropped `json` store (V-L2-F2 / #112).
 ///
 /// Out of scope here: V-L2-E1 backend/target_db conflict (own issue),
 /// target-DB reachability (needs live connection).
@@ -820,6 +859,28 @@ pub fn validate_manifest(path: &str) -> ValidationReport {
                 )),
             });
         }
+
+        // 4. Sidecar storage backend is supported. Delegates to the one
+        // validator (`SqlDialect::from_storage`) so `validate`/`doctor`
+        // and `generate` agree on the accepted set. This is where a typo'd
+        // or dropped backend (e.g. the never-implemented `json` store,
+        // V-L2-F2 / #112) is surfaced before it reaches codegen.
+        let storage_check = ValidationCheck {
+            name: "sidecar-storage-supported".to_string(),
+            description: "[sidecar].storage names a supported backend".to_string(),
+            passed: true,
+            detail: None,
+        };
+        checks.push(
+            match crate::codegen::overlay::SqlDialect::from_storage(&m.sidecar.storage) {
+                Ok(_) => storage_check,
+                Err(e) => ValidationCheck {
+                    passed: false,
+                    detail: Some(e.to_string()),
+                    ..storage_check
+                },
+            },
+        );
     }
 
     let passed = checks.iter().all(|c| c.passed);
