@@ -23,4 +23,7 @@ enable-simulation = false
 
 [sidecar]
 storage = "sqlite"
+# To use the JSON document store instead (see examples/json-sidecar):
+#   storage = "json"
+#   format  = "ndjson"   # "plain" | "ld" | "ndjson"
 path = ".verisim/sidecar.db"

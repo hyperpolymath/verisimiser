@@ -381,6 +381,12 @@ impl JsonStore {
 
     /// Persist the store atomically: write a sibling temp file, then rename
     /// over the target so a crash mid-write can't truncate the sidecar.
+    /// `rename(2)` within a directory is atomic, so a concurrent reader sees
+    /// either the old or new complete file, never a partial one.
+    ///
+    /// For *write* flows, call this via [`with_locked`] so the load→mutate→
+    /// save cycle is serialised against other writers; calling it bare is
+    /// fine for a freshly-built store no other process can see yet.
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -889,6 +895,38 @@ pub fn scaffold(octad: &OctadConfig, format: JsonFormat) -> Result<String> {
             Ok(serde_json::to_string_pretty(&doc)?)
         }
     }
+}
+
+/// Run a mutating transaction against the json sidecar at `path` while
+/// holding the cross-process write lock for the whole load→mutate→save
+/// cycle, then persist atomically.
+///
+/// This is the safe entry point for any operation that *writes* the store
+/// (gc, provenance/temporal appends): the lock serialises concurrent
+/// writers (the json analogue of SQLite's write lock) and the fresh load
+/// inside the lock guarantees the closure sees the latest state. Read-only
+/// callers can use [`JsonStore::open`] directly — atomic rename means a
+/// reader always sees a complete file.
+pub fn with_locked<T>(
+    path: impl AsRef<Path>,
+    format: JsonFormat,
+    f: impl FnOnce(&mut JsonStore) -> Result<T>,
+) -> Result<T> {
+    let path = path.as_ref();
+    // The lock file is a sibling of the sidecar, so its parent must exist
+    // before we can create it.
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating sidecar dir {}", parent.display()))?;
+        }
+    }
+    let _lock = super::lock::FileLock::acquire(path)?;
+    let mut store = JsonStore::open(path, format)?;
+    let out = f(&mut store)?;
+    store.save()?;
+    Ok(out)
+    // `_lock` is dropped here, releasing the write lock.
 }
 
 /// Parse an RFC 3339 timestamp to UTC, discarding the offset.

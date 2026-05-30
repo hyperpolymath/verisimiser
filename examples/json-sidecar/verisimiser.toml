@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# VeriSimiser manifest: JSON-family (NDJSON) sidecar example.
+#
+# Same octad augmentation as the blog-db example, but the sidecar is an
+# append-only NDJSON document store instead of SQLite — handy when you want
+# the provenance/temporal data as plain, diff-/grep-able text. Switch
+# `format` to "ld" for JSON-LD (linked-data tooling) or "plain" for a single
+# keyed JSON object.
+
+[project]
+name = "json-sidecar-example"
+version = "0.1.0"
+description = "Example: octad augmentation with a JSON-family (NDJSON) sidecar"
+
+[database]
+backend = "sqlite"
+connection-string-env = "APP_DATABASE_URL"
+# schema-source = "schema.sql"   # optional; omitted here for a self-contained example
+
+[octad]
+enable-provenance = true
+enable-lineage = true
+enable-temporal = true
+enable-access-control = true
+enable-simulation = false
+
+[sidecar]
+storage = "json"
+format  = "ndjson"   # "plain" | "ld" | "ndjson"
+path = ".verisim/sidecar.ndjson"

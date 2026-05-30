@@ -65,15 +65,20 @@ fn run_gc_json(
     dry_run: bool,
     format: crate::sidecar::JsonFormat,
 ) -> Result<GcReport> {
+    use crate::sidecar::json::{self, JsonStore};
     let sidecar_path = &manifest.sidecar.path;
-    let mut store = crate::sidecar::json::JsonStore::open(sidecar_path, format)
-        .with_context(|| format!("opening json sidecar at {}", sidecar_path))?;
-    let counts = store.gc_purge(&manifest.retention, dry_run);
-    if !dry_run {
-        store
-            .save()
-            .with_context(|| format!("saving json sidecar at {}", sidecar_path))?;
-    }
+    let retention = &manifest.retention;
+    let counts = if dry_run {
+        // Read-only: count purge candidates without locking or writing.
+        let mut store = JsonStore::open(sidecar_path, format)
+            .with_context(|| format!("opening json sidecar at {}", sidecar_path))?;
+        store.gc_purge(retention, true)
+    } else {
+        // Mutating: hold the cross-process write lock across load→purge→save.
+        json::with_locked(sidecar_path, format, |store| {
+            Ok(store.gc_purge(retention, false))
+        })?
+    };
     Ok(GcReport {
         sidecar: sidecar_path.clone(),
         dry_run,

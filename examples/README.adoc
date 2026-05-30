@@ -1,1 +1,10 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
 = examples Pillar
+
+Worked examples of `verisimiser.toml` manifests.
+
+* **blog-db/** — augment a typical blog database (SQLite target) with the
+  octad dimensions, using the default SQLite sidecar.
+* **json-sidecar/** — the same octad augmentation, but stored in a
+  JSON-family (NDJSON) sidecar instead of SQLite. Shows `[sidecar].storage =
+  "json"` + `format`.
