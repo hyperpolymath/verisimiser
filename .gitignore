@@ -92,6 +92,12 @@ docs/reports/maintenance/*.json
 *.tmp
 *.bak
 
+# Generated VeriSimiser sidecar artifacts — stores, `generate` scaffolds, and
+# `<path>.lock` write-locks. The default sidecar/output location is .verisim/
+# (see `[sidecar].path` and `verisimiser generate -o`); these are runtime
+# data, never source. Atomic-write temp files are covered by `*.tmp` above.
+.verisim/
+
 # Crash recovery artifacts
 ai-cli-crash-capture/
 
