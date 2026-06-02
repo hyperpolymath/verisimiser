@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 # VeriSimiser manifest for the blog-db example.
 #
 # This example augments a typical blog database (SQLite) with provenance,

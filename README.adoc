@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: PMPL-1.0-or-later
+// SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 = VeriSimiser
 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
@@ -418,4 +418,4 @@ Part of the https://github.com/hyperpolymath/iseriser[-iser family].
 
 == License
 
-SPDX-License-Identifier: PMPL-1.0-or-later
+SPDX-License-Identifier: MPL-2.0

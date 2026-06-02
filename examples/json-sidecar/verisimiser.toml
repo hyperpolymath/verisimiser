@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 # VeriSimiser manifest: JSON-family (NDJSON) sidecar example.
 #
 # Same octad augmentation as the blog-db example, but the sidecar is an
