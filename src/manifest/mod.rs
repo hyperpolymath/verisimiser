@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: PMPL-1.0-or-later
+// SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 //
 // Manifest module for VeriSimiser.
@@ -709,7 +709,7 @@ pub(crate) fn render_manifest_template(database: &str, name: Option<&str>) -> St
     let retention = RetentionConfig::default();
     let project_name = name.unwrap_or(&project.name);
     format!(
-        r#"# SPDX-License-Identifier: PMPL-1.0-or-later
+        r#"# SPDX-License-Identifier: MPL-2.0
 # VeriSimiser manifest — augment {database} with VeriSimDB octad capabilities
 
 [project]
