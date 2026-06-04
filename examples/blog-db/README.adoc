@@ -1,5 +1,6 @@
-= Blog Database Example
 // SPDX-License-Identifier: MPL-2.0
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+= Blog Database Example
 
 This example demonstrates VeriSimiser augmenting a typical blog database
 (users, posts, comments, tags) with VeriSimDB octad dimensions.

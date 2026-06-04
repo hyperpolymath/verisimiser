@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 //
 // FAILING-BY-DESIGN test for the fork-impossibility defect
 // (#31 + #32, see docs/decisions/0010-provenance-forks-are-first-class.adoc).

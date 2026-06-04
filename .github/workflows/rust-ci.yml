@@ -19,6 +19,7 @@ jobs:
   check:
     name: cargo check (stable)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
@@ -33,6 +34,7 @@ jobs:
   test:
     name: cargo test (${{ matrix.rust }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: check
     strategy:
       fail-fast: false

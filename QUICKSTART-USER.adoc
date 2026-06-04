@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 // Template: QUICKSTART-USER.adoc — 5-minute path to working software
 // Replace verisimiser, Verisimiser — See README.adoc for details., just run, Verisimiser started successfully. with actuals
 = verisimiser — Quick Start for Users
