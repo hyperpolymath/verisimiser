@@ -1,20 +1,16 @@
 # SPDX-License-Identifier: MPL-2.0
 # Rust CI - cargo check + clippy + fmt + test on stable and MSRV
 name: Rust CI
-
 on:
   pull_request:
   push:
     branches:
       - main
-
 concurrency:
   group: rust-ci-${{ github.ref }}
   cancel-in-progress: true
-
 permissions:
   contents: read
-
 jobs:
   check:
     name: cargo check (stable)
@@ -30,7 +26,6 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
-
   test:
     name: cargo test (${{ matrix.rust }})
     runs-on: ubuntu-latest

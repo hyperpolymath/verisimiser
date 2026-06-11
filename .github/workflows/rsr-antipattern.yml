@@ -6,17 +6,13 @@
 # Allows: ReScript, Deno, WASM, Rust, OCaml, Haskell, Guile/Scheme
 
 name: RSR Anti-Pattern Check
-
 on:
   push:
     branches: [main, master, develop]
   pull_request:
     branches: [main, master, develop]
-
-
 permissions:
   contents: read
-
 jobs:
   antipattern-check:
     runs-on: ubuntu-latest
@@ -25,7 +21,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
       - name: Check for TypeScript
         run: |
           # Exclude bindings/deno/ - those are Deno FFI files using Deno.dlopen, not plain TypeScript
@@ -37,7 +32,6 @@ jobs:
             exit 1
           fi
           echo "✅ No TypeScript files (Deno FFI bindings excluded)"
-
       - name: Check for Go
         run: |
           if find . -name "*.go" | grep -q .; then
@@ -46,7 +40,6 @@ jobs:
             exit 1
           fi
           echo "✅ No Go files"
-
       - name: Check for Python (non-SaltStack)
         run: |
           PY_FILES=$(find . -name "*.py" | grep -v salt | grep -v _states | grep -v _modules | grep -v pillar | grep -v venv | grep -v __pycache__ || true)
@@ -56,7 +49,6 @@ jobs:
             exit 1
           fi
           echo "✅ No non-SaltStack Python files"
-
       - name: Check for npm lockfiles
         run: |
           if [ -f "package-lock.json" ] || [ -f "yarn.lock" ]; then
@@ -64,7 +56,6 @@ jobs:
             exit 1
           fi
           echo "✅ No npm lockfiles"
-
       - name: Check for tsconfig
         run: |
           if [ -f "tsconfig.json" ]; then
@@ -72,7 +63,6 @@ jobs:
             exit 1
           fi
           echo "✅ No tsconfig.json"
-
       - name: Verify Deno presence (if package.json exists)
         run: |
           if [ -f "package.json" ]; then
@@ -81,7 +71,6 @@ jobs:
             fi
           fi
           echo "✅ Deno configuration check complete"
-
       - name: Summary
         run: |
           echo "╔════════════════════════════════════════════════════════════╗"
