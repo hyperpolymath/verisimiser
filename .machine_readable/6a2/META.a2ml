@@ -7,7 +7,7 @@ version = "0.1.0"
 last-updated = "2026-03-20"
 
 [project-info]
-license = "PMPL-1.0-or-later"
+license = "MPL-2.0"
 author = "Jonathan D.A. Jewell (hyperpolymath)"
 
 [architecture-decisions]

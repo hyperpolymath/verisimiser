@@ -22,7 +22,7 @@ can-create-files = true
 # - Never commit secrets or credentials
 # - Never use banned languages (TypeScript, Python, Go, etc.)
 # - Never place state files in repository root (must be in .machine_readable/)
-# - Never use AGPL license (use PMPL-1.0-or-later)
+# - Never use AGPL license (use MPL-2.0)
 # - Never generate code that writes to the target database from Tier 1
 # - Never break provenance hash chain ordering (append-only)
 # - Never bypass sidecar isolation guarantees
