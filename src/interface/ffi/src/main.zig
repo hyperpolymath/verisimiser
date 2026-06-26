@@ -90,7 +90,12 @@ pub const DimensionMask = u32;
 
 /// VeriSimiser library handle (opaque to C callers).
 /// Holds the augmentation state, sidecar connections, and configuration.
-pub const Handle = extern struct {
+///
+/// This is a normal Zig struct, never an `extern struct`: it holds a
+/// `std.mem.Allocator` (which is not extern-compatible) and is only ever
+/// crossed the C boundary as an opaque `?*Handle` pointer, so its layout is
+/// private to this module.
+pub const Handle = struct {
     allocator: std.mem.Allocator,
     initialized: bool,
     backend: DatabaseBackend,
@@ -102,7 +107,9 @@ pub const Handle = extern struct {
 };
 
 /// Database connection handle (opaque to C callers).
-pub const DbConnection = extern struct {
+/// Normal struct for the same reason as `Handle`: it holds an allocator and
+/// only crosses the C boundary as an opaque pointer.
+pub const DbConnection = struct {
     allocator: std.mem.Allocator,
     backend: DatabaseBackend,
     connected: bool,
@@ -469,7 +476,6 @@ export fn verisimiser_vql_query(
 export fn verisimiser_vql_free_result(result_ptr: u64) void {
     if (result_ptr == 0) return;
     // TODO: free result set memory
-    _ = result_ptr;
 }
 
 //==============================================================================
