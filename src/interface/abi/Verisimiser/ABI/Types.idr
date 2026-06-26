@@ -18,6 +18,7 @@ module Verisimiser.ABI.Types
 import Data.Bits
 import Data.So
 import Data.Vect
+import Decidable.Equality
 
 %default total
 
@@ -33,10 +34,7 @@ data Platform = Linux | Windows | MacOS | BSD | WASM
 ||| This will be set during compilation based on target
 public export
 thisPlatform : Platform
-thisPlatform =
-  %runElab do
-    -- Platform detection logic
-    pure Linux  -- Default, override with compiler flags
+thisPlatform = Linux  -- Default; override with compiler flags / target selection
 
 --------------------------------------------------------------------------------
 -- Octad Dimensions
@@ -74,7 +72,62 @@ DecEq OctadDimension where
   decEq AccessControl AccessControl = Yes Refl
   decEq Temporal Temporal = Yes Refl
   decEq Simulation Simulation = Yes Refl
-  decEq _ _ = No absurd
+  decEq Data Metadata = No (\case Refl impossible)
+  decEq Data Provenance = No (\case Refl impossible)
+  decEq Data Lineage = No (\case Refl impossible)
+  decEq Data Constraints = No (\case Refl impossible)
+  decEq Data AccessControl = No (\case Refl impossible)
+  decEq Data Temporal = No (\case Refl impossible)
+  decEq Data Simulation = No (\case Refl impossible)
+  decEq Metadata Data = No (\case Refl impossible)
+  decEq Metadata Provenance = No (\case Refl impossible)
+  decEq Metadata Lineage = No (\case Refl impossible)
+  decEq Metadata Constraints = No (\case Refl impossible)
+  decEq Metadata AccessControl = No (\case Refl impossible)
+  decEq Metadata Temporal = No (\case Refl impossible)
+  decEq Metadata Simulation = No (\case Refl impossible)
+  decEq Provenance Data = No (\case Refl impossible)
+  decEq Provenance Metadata = No (\case Refl impossible)
+  decEq Provenance Lineage = No (\case Refl impossible)
+  decEq Provenance Constraints = No (\case Refl impossible)
+  decEq Provenance AccessControl = No (\case Refl impossible)
+  decEq Provenance Temporal = No (\case Refl impossible)
+  decEq Provenance Simulation = No (\case Refl impossible)
+  decEq Lineage Data = No (\case Refl impossible)
+  decEq Lineage Metadata = No (\case Refl impossible)
+  decEq Lineage Provenance = No (\case Refl impossible)
+  decEq Lineage Constraints = No (\case Refl impossible)
+  decEq Lineage AccessControl = No (\case Refl impossible)
+  decEq Lineage Temporal = No (\case Refl impossible)
+  decEq Lineage Simulation = No (\case Refl impossible)
+  decEq Constraints Data = No (\case Refl impossible)
+  decEq Constraints Metadata = No (\case Refl impossible)
+  decEq Constraints Provenance = No (\case Refl impossible)
+  decEq Constraints Lineage = No (\case Refl impossible)
+  decEq Constraints AccessControl = No (\case Refl impossible)
+  decEq Constraints Temporal = No (\case Refl impossible)
+  decEq Constraints Simulation = No (\case Refl impossible)
+  decEq AccessControl Data = No (\case Refl impossible)
+  decEq AccessControl Metadata = No (\case Refl impossible)
+  decEq AccessControl Provenance = No (\case Refl impossible)
+  decEq AccessControl Lineage = No (\case Refl impossible)
+  decEq AccessControl Constraints = No (\case Refl impossible)
+  decEq AccessControl Temporal = No (\case Refl impossible)
+  decEq AccessControl Simulation = No (\case Refl impossible)
+  decEq Temporal Data = No (\case Refl impossible)
+  decEq Temporal Metadata = No (\case Refl impossible)
+  decEq Temporal Provenance = No (\case Refl impossible)
+  decEq Temporal Lineage = No (\case Refl impossible)
+  decEq Temporal Constraints = No (\case Refl impossible)
+  decEq Temporal AccessControl = No (\case Refl impossible)
+  decEq Temporal Simulation = No (\case Refl impossible)
+  decEq Simulation Data = No (\case Refl impossible)
+  decEq Simulation Metadata = No (\case Refl impossible)
+  decEq Simulation Provenance = No (\case Refl impossible)
+  decEq Simulation Lineage = No (\case Refl impossible)
+  decEq Simulation Constraints = No (\case Refl impossible)
+  decEq Simulation AccessControl = No (\case Refl impossible)
+  decEq Simulation Temporal = No (\case Refl impossible)
 
 ||| Convert OctadDimension to a C-compatible integer tag.
 public export
@@ -96,7 +149,7 @@ allDimensions = [Data, Metadata, Provenance, Lineage,
 
 ||| Proof that allDimensions contains exactly 8 elements.
 public export
-octadIsEight : length allDimensions = 8
+octadIsEight : length Types.allDimensions = 8
 octadIsEight = Refl
 
 --------------------------------------------------------------------------------
@@ -158,7 +211,26 @@ DecEq DatabaseBackend where
   decEq MongoDB MongoDB = Yes Refl
   decEq Redis Redis = Yes Refl
   decEq MySQL MySQL = Yes Refl
-  decEq _ _ = No absurd
+  decEq PostgreSQL SQLite = No (\case Refl impossible)
+  decEq PostgreSQL MongoDB = No (\case Refl impossible)
+  decEq PostgreSQL Redis = No (\case Refl impossible)
+  decEq PostgreSQL MySQL = No (\case Refl impossible)
+  decEq SQLite PostgreSQL = No (\case Refl impossible)
+  decEq SQLite MongoDB = No (\case Refl impossible)
+  decEq SQLite Redis = No (\case Refl impossible)
+  decEq SQLite MySQL = No (\case Refl impossible)
+  decEq MongoDB PostgreSQL = No (\case Refl impossible)
+  decEq MongoDB SQLite = No (\case Refl impossible)
+  decEq MongoDB Redis = No (\case Refl impossible)
+  decEq MongoDB MySQL = No (\case Refl impossible)
+  decEq Redis PostgreSQL = No (\case Refl impossible)
+  decEq Redis SQLite = No (\case Refl impossible)
+  decEq Redis MongoDB = No (\case Refl impossible)
+  decEq Redis MySQL = No (\case Refl impossible)
+  decEq MySQL PostgreSQL = No (\case Refl impossible)
+  decEq MySQL SQLite = No (\case Refl impossible)
+  decEq MySQL MongoDB = No (\case Refl impossible)
+  decEq MySQL Redis = No (\case Refl impossible)
 
 --------------------------------------------------------------------------------
 -- Result Codes
@@ -208,7 +280,62 @@ DecEq Result where
   decEq ConnectionFailed ConnectionFailed = Yes Refl
   decEq ChainCorrupted ChainCorrupted = Yes Refl
   decEq SidecarUnavailable SidecarUnavailable = Yes Refl
-  decEq _ _ = No absurd
+  decEq Ok Error = No (\case Refl impossible)
+  decEq Ok InvalidParam = No (\case Refl impossible)
+  decEq Ok OutOfMemory = No (\case Refl impossible)
+  decEq Ok NullPointer = No (\case Refl impossible)
+  decEq Ok ConnectionFailed = No (\case Refl impossible)
+  decEq Ok ChainCorrupted = No (\case Refl impossible)
+  decEq Ok SidecarUnavailable = No (\case Refl impossible)
+  decEq Error Ok = No (\case Refl impossible)
+  decEq Error InvalidParam = No (\case Refl impossible)
+  decEq Error OutOfMemory = No (\case Refl impossible)
+  decEq Error NullPointer = No (\case Refl impossible)
+  decEq Error ConnectionFailed = No (\case Refl impossible)
+  decEq Error ChainCorrupted = No (\case Refl impossible)
+  decEq Error SidecarUnavailable = No (\case Refl impossible)
+  decEq InvalidParam Ok = No (\case Refl impossible)
+  decEq InvalidParam Error = No (\case Refl impossible)
+  decEq InvalidParam OutOfMemory = No (\case Refl impossible)
+  decEq InvalidParam NullPointer = No (\case Refl impossible)
+  decEq InvalidParam ConnectionFailed = No (\case Refl impossible)
+  decEq InvalidParam ChainCorrupted = No (\case Refl impossible)
+  decEq InvalidParam SidecarUnavailable = No (\case Refl impossible)
+  decEq OutOfMemory Ok = No (\case Refl impossible)
+  decEq OutOfMemory Error = No (\case Refl impossible)
+  decEq OutOfMemory InvalidParam = No (\case Refl impossible)
+  decEq OutOfMemory NullPointer = No (\case Refl impossible)
+  decEq OutOfMemory ConnectionFailed = No (\case Refl impossible)
+  decEq OutOfMemory ChainCorrupted = No (\case Refl impossible)
+  decEq OutOfMemory SidecarUnavailable = No (\case Refl impossible)
+  decEq NullPointer Ok = No (\case Refl impossible)
+  decEq NullPointer Error = No (\case Refl impossible)
+  decEq NullPointer InvalidParam = No (\case Refl impossible)
+  decEq NullPointer OutOfMemory = No (\case Refl impossible)
+  decEq NullPointer ConnectionFailed = No (\case Refl impossible)
+  decEq NullPointer ChainCorrupted = No (\case Refl impossible)
+  decEq NullPointer SidecarUnavailable = No (\case Refl impossible)
+  decEq ConnectionFailed Ok = No (\case Refl impossible)
+  decEq ConnectionFailed Error = No (\case Refl impossible)
+  decEq ConnectionFailed InvalidParam = No (\case Refl impossible)
+  decEq ConnectionFailed OutOfMemory = No (\case Refl impossible)
+  decEq ConnectionFailed NullPointer = No (\case Refl impossible)
+  decEq ConnectionFailed ChainCorrupted = No (\case Refl impossible)
+  decEq ConnectionFailed SidecarUnavailable = No (\case Refl impossible)
+  decEq ChainCorrupted Ok = No (\case Refl impossible)
+  decEq ChainCorrupted Error = No (\case Refl impossible)
+  decEq ChainCorrupted InvalidParam = No (\case Refl impossible)
+  decEq ChainCorrupted OutOfMemory = No (\case Refl impossible)
+  decEq ChainCorrupted NullPointer = No (\case Refl impossible)
+  decEq ChainCorrupted ConnectionFailed = No (\case Refl impossible)
+  decEq ChainCorrupted SidecarUnavailable = No (\case Refl impossible)
+  decEq SidecarUnavailable Ok = No (\case Refl impossible)
+  decEq SidecarUnavailable Error = No (\case Refl impossible)
+  decEq SidecarUnavailable InvalidParam = No (\case Refl impossible)
+  decEq SidecarUnavailable OutOfMemory = No (\case Refl impossible)
+  decEq SidecarUnavailable NullPointer = No (\case Refl impossible)
+  decEq SidecarUnavailable ConnectionFailed = No (\case Refl impossible)
+  decEq SidecarUnavailable ChainCorrupted = No (\case Refl impossible)
 
 --------------------------------------------------------------------------------
 -- Opaque Handles
@@ -224,8 +351,10 @@ data Handle : Type where
 ||| Returns Nothing if pointer is null.
 public export
 createHandle : Bits64 -> Maybe Handle
-createHandle 0 = Nothing
-createHandle ptr = Just (MkHandle ptr)
+createHandle ptr =
+  case choose (ptr /= 0) of
+    Left ok => Just (MkHandle ptr {nonNull = ok})
+    Right _ => Nothing
 
 ||| Extract pointer value from handle.
 public export
@@ -240,8 +369,10 @@ data DbConnection : Type where
 ||| Safely create a database connection handle.
 public export
 createDbConnection : Bits64 -> Maybe DbConnection
-createDbConnection 0 = Nothing
-createDbConnection ptr = Just (MkDbConnection ptr)
+createDbConnection ptr =
+  case choose (ptr /= 0) of
+    Left ok => Just (MkDbConnection ptr {nonNull = ok})
+    Right _ => Nothing
 
 ||| Extract pointer from database connection handle.
 public export
@@ -373,10 +504,16 @@ ptrSize MacOS = 64
 ptrSize BSD = 64
 ptrSize WASM = 32
 
-||| Pointer type for platform.
+||| Pointer type for platform. 64-bit platforms use `Bits64`; WASM uses
+||| `Bits32`. (The target-element type parameter is phantom: C pointers are
+||| machine words regardless of pointee.)
 public export
 CPtr : Platform -> Type -> Type
-CPtr p _ = Bits (ptrSize p)
+CPtr Linux   _ = Bits64
+CPtr Windows _ = Bits64
+CPtr MacOS   _ = Bits64
+CPtr BSD     _ = Bits64
+CPtr WASM    _ = Bits32
 
 --------------------------------------------------------------------------------
 -- Memory Layout Proofs
@@ -392,21 +529,20 @@ public export
 data HasAlignment : Type -> Nat -> Type where
   AlignProof : {0 t : Type} -> {n : Nat} -> HasAlignment t n
 
-||| Size of C types (platform-specific).
+||| Size of C types (platform-specific). `CInt`/`CSize` reduce to the
+||| concrete `Bits32`/`Bits64` primitives below, so they are handled by those
+||| clauses (one cannot pattern-match on a reducible type-level application).
 public export
 cSizeOf : (p : Platform) -> (t : Type) -> Nat
-cSizeOf p (CInt _) = 4
-cSizeOf p (CSize _) = if ptrSize p == 64 then 8 else 4
 cSizeOf p Bits32 = 4
 cSizeOf p Bits64 = 8
 cSizeOf p Double = 8
 cSizeOf p _ = ptrSize p `div` 8
 
-||| Alignment of C types (platform-specific).
+||| Alignment of C types (platform-specific). See `cSizeOf` for the
+||| `CInt`/`CSize` reduction note.
 public export
 cAlignOf : (p : Platform) -> (t : Type) -> Nat
-cAlignOf p (CInt _) = 4
-cAlignOf p (CSize _) = if ptrSize p == 64 then 8 else 4
 cAlignOf p Bits32 = 4
 cAlignOf p Bits64 = 8
 cAlignOf p Double = 8
