@@ -90,7 +90,10 @@ pub const DimensionMask = u32;
 
 /// VeriSimiser library handle (opaque to C callers).
 /// Holds the augmentation state, sidecar connections, and configuration.
-pub const Handle = extern struct {
+/// Internal layout is hidden from C: callers only ever hold a `*Handle`, so
+/// this is a normal (auto-layout) struct, not `extern` — it must hold a
+/// `std.mem.Allocator`, which has no guaranteed C layout.
+pub const Handle = struct {
     allocator: std.mem.Allocator,
     initialized: bool,
     backend: DatabaseBackend,
@@ -101,8 +104,8 @@ pub const Handle = extern struct {
     drift_enabled: bool,
 };
 
-/// Database connection handle (opaque to C callers).
-pub const DbConnection = extern struct {
+/// Database connection handle (opaque to C callers; see `Handle` note above).
+pub const DbConnection = struct {
     allocator: std.mem.Allocator,
     backend: DatabaseBackend,
     connected: bool,
@@ -468,8 +471,8 @@ export fn verisimiser_vql_query(
 /// Free a VCL-total query result set.
 export fn verisimiser_vql_free_result(result_ptr: u64) void {
     if (result_ptr == 0) return;
-    // TODO: free result set memory
-    _ = result_ptr;
+    // TODO: free result set memory (result_ptr points to a result set
+    // allocated by verisimiser_vql_query once that is implemented).
 }
 
 //==============================================================================

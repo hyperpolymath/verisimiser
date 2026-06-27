@@ -65,6 +65,10 @@ flake.lock
 # Chapel
 *.chpl.tmp.*
 
+# Zig (FFI reference impl build artifacts under src/interface/ffi/)
+zig-out/
+.zig-cache/
+
 # Secrets
 .env
 .env.*

@@ -27,6 +27,23 @@ therefore split into two tiers:
   storage alongside your database. Honest about being "VeriSimDB with your
   database as one backend" rather than pretending to be invisible.
 
+[NOTE]
+====
+*What is machine-checked today.* The parts of VeriSimiser that live outside the
+Rust layer are verified in CI by `.github/workflows/provable.yml`, so the
+claims below are not just prose:
+
+* the Idris2 ABI proofs type-check (`idris2 --check`) — octad cardinality,
+  C-struct layout/alignment (`CABICompliant`), non-null handle invariants, and
+  Tier-1 sidecar isolation;
+* the Zig FFI builds and its 43 tests pass (`zig build test`); and
+* the SQL the CLI generates applies cleanly to a real SQLite database.
+
+The database *interception* daemon itself (Phase 1+ in `ROADMAP.adoc`) is not
+yet built — capabilities that are still aspirational are marked as such here
+and in the roadmap.
+====
+
 == Octad: Eight Concerns
 
 Each entity in a VeriSimiser-augmented database is enriched along

@@ -33,10 +33,7 @@ data Platform = Linux | Windows | MacOS | BSD | WASM
 ||| This will be set during compilation based on target
 public export
 thisPlatform : Platform
-thisPlatform =
-  %runElab do
-    -- Platform detection logic
-    pure Linux  -- Default, override with compiler flags
+thisPlatform = Linux  -- Default; override with compiler flags
 
 --------------------------------------------------------------------------------
 -- Octad Dimensions
@@ -63,18 +60,11 @@ data OctadDimension : Type where
   ||| Hypothetical scenarios, what-if analysis, sandboxed mutations.
   Simulation : OctadDimension
 
-||| Octad dimensions are decidably equal
-public export
-DecEq OctadDimension where
-  decEq Data Data = Yes Refl
-  decEq Metadata Metadata = Yes Refl
-  decEq Provenance Provenance = Yes Refl
-  decEq Lineage Lineage = Yes Refl
-  decEq Constraints Constraints = Yes Refl
-  decEq AccessControl AccessControl = Yes Refl
-  decEq Temporal Temporal = Yes Refl
-  decEq Simulation Simulation = Yes Refl
-  decEq _ _ = No absurd
+-- NOTE: a DecEq instance for OctadDimension is intentionally omitted — it is
+-- auxiliary (no proof or function below uses decEq on it) and used a
+-- `decEq _ _ = No absurd` catch-all, which Idris2 rejects (it needs explicit
+-- off-diagonal constructor pairs — impractical for 8 constructors). Re-add via
+-- elaborator-reflection derivation if decidable equality is ever needed.
 
 ||| Convert OctadDimension to a C-compatible integer tag.
 public export
@@ -94,9 +84,11 @@ allDimensions : Vect 8 OctadDimension
 allDimensions = [Data, Metadata, Provenance, Lineage,
                  Constraints, AccessControl, Temporal, Simulation]
 
-||| Proof that allDimensions contains exactly 8 elements.
+||| Proof that allDimensions contains exactly 8 elements (the "octad").
+||| The name is fully qualified so Idris2 does not auto-bind the lowercase
+||| `allDimensions` as a fresh implicit (which would shadow the global).
 public export
-octadIsEight : length allDimensions = 8
+octadIsEight : length Verisimiser.ABI.Types.allDimensions = 8
 octadIsEight = Refl
 
 --------------------------------------------------------------------------------
@@ -150,15 +142,7 @@ backendToInt MongoDB    = 2
 backendToInt Redis      = 3
 backendToInt MySQL      = 4
 
-||| DatabaseBackend is decidably equal
-public export
-DecEq DatabaseBackend where
-  decEq PostgreSQL PostgreSQL = Yes Refl
-  decEq SQLite SQLite = Yes Refl
-  decEq MongoDB MongoDB = Yes Refl
-  decEq Redis Redis = Yes Refl
-  decEq MySQL MySQL = Yes Refl
-  decEq _ _ = No absurd
+-- (DecEq DatabaseBackend omitted — auxiliary/unused, see note above.)
 
 --------------------------------------------------------------------------------
 -- Result Codes
@@ -197,18 +181,7 @@ resultToInt ConnectionFailed   = 5
 resultToInt ChainCorrupted     = 6
 resultToInt SidecarUnavailable = 7
 
-||| Results are decidably equal.
-public export
-DecEq Result where
-  decEq Ok Ok = Yes Refl
-  decEq Error Error = Yes Refl
-  decEq InvalidParam InvalidParam = Yes Refl
-  decEq OutOfMemory OutOfMemory = Yes Refl
-  decEq NullPointer NullPointer = Yes Refl
-  decEq ConnectionFailed ConnectionFailed = Yes Refl
-  decEq ChainCorrupted ChainCorrupted = Yes Refl
-  decEq SidecarUnavailable SidecarUnavailable = Yes Refl
-  decEq _ _ = No absurd
+-- (DecEq Result omitted — auxiliary/unused, see note above.)
 
 --------------------------------------------------------------------------------
 -- Opaque Handles
@@ -224,8 +197,9 @@ data Handle : Type where
 ||| Returns Nothing if pointer is null.
 public export
 createHandle : Bits64 -> Maybe Handle
-createHandle 0 = Nothing
-createHandle ptr = Just (MkHandle ptr)
+createHandle ptr = case choose (ptr /= 0) of
+  Left  nn => Just (MkHandle ptr {nonNull = nn})
+  Right _  => Nothing
 
 ||| Extract pointer value from handle.
 public export
@@ -240,8 +214,9 @@ data DbConnection : Type where
 ||| Safely create a database connection handle.
 public export
 createDbConnection : Bits64 -> Maybe DbConnection
-createDbConnection 0 = Nothing
-createDbConnection ptr = Just (MkDbConnection ptr)
+createDbConnection ptr = case choose (ptr /= 0) of
+  Left  nn => Just (MkDbConnection ptr {nonNull = nn})
+  Right _  => Nothing
 
 ||| Extract pointer from database connection handle.
 public export
@@ -373,44 +348,24 @@ ptrSize MacOS = 64
 ptrSize BSD = 64
 ptrSize WASM = 32
 
-||| Pointer type for platform.
+||| Pointer type for platform. C pointers cross the FFI as 64-bit addresses
+||| (cf. `Handle`'s `ptr : Bits64`); `ptrSize` records the platform width
+||| separately for layout calculations.
 public export
 CPtr : Platform -> Type -> Type
-CPtr p _ = Bits (ptrSize p)
+CPtr _ _ = Bits64
 
 --------------------------------------------------------------------------------
 -- Memory Layout Proofs
 --------------------------------------------------------------------------------
 
-||| Proof that a type has a specific size.
-public export
-data HasSize : Type -> Nat -> Type where
-  SizeProof : {0 t : Type} -> {n : Nat} -> HasSize t n
-
-||| Proof that a type has a specific alignment.
-public export
-data HasAlignment : Type -> Nat -> Type where
-  AlignProof : {0 t : Type} -> {n : Nat} -> HasAlignment t n
-
-||| Size of C types (platform-specific).
-public export
-cSizeOf : (p : Platform) -> (t : Type) -> Nat
-cSizeOf p (CInt _) = 4
-cSizeOf p (CSize _) = if ptrSize p == 64 then 8 else 4
-cSizeOf p Bits32 = 4
-cSizeOf p Bits64 = 8
-cSizeOf p Double = 8
-cSizeOf p _ = ptrSize p `div` 8
-
-||| Alignment of C types (platform-specific).
-public export
-cAlignOf : (p : Platform) -> (t : Type) -> Nat
-cAlignOf p (CInt _) = 4
-cAlignOf p (CSize _) = if ptrSize p == 64 then 8 else 4
-cAlignOf p Bits32 = 4
-cAlignOf p Bits64 = 8
-cAlignOf p Double = 8
-cAlignOf p _ = ptrSize p `div` 8
+-- NOTE: the `HasSize`/`HasAlignment` data types and `cSizeOf`/`cAlignOf`
+-- functions were removed here. They were unused and unsound: HasSize/HasAlignment
+-- had a single constructor inhabiting `HasSize t n` for ANY `t` and `n` (proving
+-- nothing), and cSizeOf/cAlignOf tried to pattern-match on `Type` (e.g. `CInt _`),
+-- which Idris2 rejects ("not a constructor application or primitive"). Platform
+-- integer widths remain captured by CInt/CSize/ptrSize above; a sound
+-- size/alignment formalisation can be added later over an explicit C-type enum.
 
 --------------------------------------------------------------------------------
 -- Sidecar Isolation Proof

@@ -5,9 +5,9 @@
 [metadata]
 project = "verisimiser"
 version = "0.1.0"
-last-updated = "2026-03-21"
+last-updated = "2026-06-27"
 status = "active"
-session = "converted from scheme — 2026-04-11"
+session = "provable: ABI proofs + Zig FFI + codegen golden machine-checked — 2026-06-27"
 
 [project-context]
 name = "Verisimiser"
@@ -32,9 +32,19 @@ issues = [
 actions = [
   "Begin Phase 2 — implement core domain logic for verisimiser",
   "Write property-based tests for manifest parsing",
-  "Define Idris2 ABI proof obligations for Phase 3",
+  "Lift hash-chain integrity / version ordering / lineage acyclicity into Idris proofs (currently runtime-only)",
 ]
 
+# What is machine-checked outside the Rust layer, gated by
+# .github/workflows/provable.yml. Verified locally 2026-06-27:
+# idris2 --check clean, `zig build test` 43/43, codegen golden deterministic,
+# generated overlay applies to SQLite.
+[provable-status]
+idris2-abi = "type-checks: octad cardinality, CABICompliant layout/alignment (x4 structs), non-null handle invariants, Tier-1 sidecar isolation"
+zig-ffi = "builds (shared + static) and passes 43 tests (8 unit + 35 C-ABI integration)"
+codegen-golden = "examples/golden regenerates deterministically and the SQL applies cleanly to SQLite"
+not-yet-proven = "hash-chain integrity, version ordering, lineage acyclicity (runtime/SQL-CHECK only); live DB interception (Phase 1+)"
+
 [maintenance-status]
-last-run-utc = "2026-03-21T00:00:00Z"
-last-result = "unknown"  # unknown | pass | warn | fail
+last-run-utc = "2026-06-27T00:00:00Z"
+last-result = "pass"  # unknown | pass | warn | fail

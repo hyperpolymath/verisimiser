@@ -10,6 +10,34 @@ ____
 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 ____
 
+== The Receipts (machine-checked)
+
+The non-Rust claims are verified on every push/PR by
+`.github/workflows/provable.yml` — these are checks, not prose:
+
+[cols="1,3"]
+|===
+| Job | What it proves
+
+| `idris2-proofs`
+| `idris2 --check` the ABI: octad cardinality, C-struct layout/alignment
+  (`CABICompliant` ×4), non-null handle invariants, Tier-1 sidecar isolation.
+
+| `zig-ffi`
+| `zig build test` — the Zig FFI builds and 43 tests pass (8 unit + 35 C-ABI
+  integration through the compiled `libverisimiser.so`).
+
+| `codegen-drift`
+| `examples/golden/` regenerates byte-identically (the generator is deterministic).
+
+| `sql-golden`
+| the generated overlay SQL applies to a fresh SQLite DB and every sidecar
+  table + enrichment view builds and is queryable.
+|===
+
+The Rust CLI is covered separately by `rust-ci.yml` (fmt + clippy + test). See
+`docs/developer/ABI-FFI-README.adoc` for the full ABI/FFI contract.
+
 == Technology Choices
 
 [cols="1,2"]

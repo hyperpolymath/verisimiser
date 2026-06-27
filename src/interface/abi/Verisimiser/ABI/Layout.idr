@@ -12,12 +12,21 @@
 ||| - DriftMeasurement: per-entity drift score across modalities
 ||| - TemporalSnapshot: versioned entity state at a point in time
 |||
+||| Every concrete layout below carries machine-checked witnesses that
+||| (1) its declared size is a multiple of its alignment and is large enough to
+|||     hold all of its fields (the `aligned` / `sizeCorrect` invariants of
+|||     `StructLayout`), and
+||| (2) every field sits at an offset that is a multiple of that field's own
+|||     alignment (`FieldsAligned` / `CABICompliant`).
+||| These are full proofs: Idris checks them at compile time, no holes.
+|||
 ||| @see https://en.wikipedia.org/wiki/Data_structure_alignment
 
 module Verisimiser.ABI.Layout
 
 import Verisimiser.ABI.Types
 import Data.Vect
+import Data.Fin
 import Data.So
 
 %default total
@@ -26,36 +35,45 @@ import Data.So
 -- Alignment Utilities
 --------------------------------------------------------------------------------
 
-||| Calculate padding needed for alignment.
+||| Padding needed to bring `offset` up to the next multiple of `alignment`.
 public export
 paddingFor : (offset : Nat) -> (alignment : Nat) -> Nat
 paddingFor offset alignment =
   if offset `mod` alignment == 0
     then 0
-    else alignment - (offset `mod` alignment)
+    else minus alignment (offset `mod` alignment)
 
-||| Proof that alignment divides aligned size.
+||| Proof that `n` divides `m`: there is a `k` with `m = k * n`.
 public export
 data Divides : Nat -> Nat -> Type where
   DivideBy : (k : Nat) -> {n : Nat} -> {m : Nat} -> (m = k * n) -> Divides n m
 
-||| Round up to next alignment boundary.
+||| Ceiling division: the smallest number of `d`-sized blocks covering `n`.
+||| (For the degenerate `d = 0` this is `0`, matching `alignUp _ 0 = 0`.)
+public export
+ceilDiv : (n : Nat) -> (d : Nat) -> Nat
+ceilDiv n d = (n + minus d 1) `div` d
+
+||| Round `size` up to the next multiple of `alignment`.
+|||
+||| Defined as `ceilDiv size alignment * alignment` so that the result is
+||| *manifestly* a multiple of `alignment`; that is exactly what
+||| `alignUpCorrect` certifies, with no auxiliary arithmetic lemmas required.
 public export
 alignUp : (size : Nat) -> (alignment : Nat) -> Nat
-alignUp size alignment =
-  size + paddingFor size alignment
+alignUp size alignment = ceilDiv size alignment * alignment
 
-||| Proof that alignUp produces aligned result.
+||| Proof that `alignUp size align` is always a multiple of `align`.
+||| Unconditional — it holds even for the degenerate `align = 0` (both sides 0).
 public export
-alignUpCorrect : (size : Nat) -> (align : Nat) -> (align > 0) -> Divides align (alignUp size align)
-alignUpCorrect size align prf =
-  DivideBy ((size + paddingFor size align) `div` align) Refl
+alignUpCorrect : (size : Nat) -> (align : Nat) -> Divides align (alignUp size align)
+alignUpCorrect size align = DivideBy (ceilDiv size align) Refl
 
 --------------------------------------------------------------------------------
 -- Struct Field Layout
 --------------------------------------------------------------------------------
 
-||| A field in a struct with its offset and size.
+||| A field in a struct with its offset, size and alignment (all in bytes).
 public export
 record Field where
   constructor MkField
@@ -64,12 +82,15 @@ record Field where
   size : Nat
   alignment : Nat
 
-||| Calculate the offset of the next field.
+||| Offset of the next field: round past this field up to its alignment.
 public export
 nextFieldOffset : Field -> Nat
 nextFieldOffset f = alignUp (f.offset + f.size) f.alignment
 
-||| A struct layout is a list of fields with proofs.
+||| A struct layout: a vector of fields plus a declared total size and
+||| alignment, carrying two erased invariants —
+|||   * `sizeCorrect`: the total size is at least the sum of the field sizes;
+|||   * `aligned`:     the total size is a multiple of the alignment.
 public export
 record StructLayout where
   constructor MkStructLayout
@@ -79,57 +100,27 @@ record StructLayout where
   {auto 0 sizeCorrect : So (totalSize >= sum (map (\f => f.size) fields))}
   {auto 0 aligned : Divides alignment totalSize}
 
-||| Calculate total struct size with padding.
+||| Every field sits at an offset that is a multiple of the field's own
+||| alignment — the core C-ABI field-placement rule.
 public export
-calcStructSize : Vect n Field -> Nat -> Nat
-calcStructSize [] align = 0
-calcStructSize (f :: fs) align =
-  let lastOffset = foldl (\acc, field => nextFieldOffset field) f.offset fs
-      lastSize = foldr (\field, _ => field.size) f.size fs
-   in alignUp (lastOffset + lastSize) align
-
-||| Proof that field offsets are correctly aligned.
-public export
-data FieldsAligned : Vect n Field -> Type where
+data FieldsAligned : {0 n : Nat} -> Vect n Field -> Type where
   NoFields : FieldsAligned []
   ConsField :
+    {0 m : Nat} ->
     (f : Field) ->
-    (rest : Vect n Field) ->
+    (rest : Vect m Field) ->
     Divides f.alignment f.offset ->
     FieldsAligned rest ->
     FieldsAligned (f :: rest)
-
-||| Verify a struct layout is valid.
-public export
-verifyLayout : (fields : Vect n Field) -> (align : Nat) -> Either String StructLayout
-verifyLayout fields align =
-  let size = calcStructSize fields align
-   in case decSo (size >= sum (map (\f => f.size) fields)) of
-        Yes prf => Right (MkStructLayout fields size align)
-        No _ => Left "Invalid struct size"
-
---------------------------------------------------------------------------------
--- Platform-Specific Layouts
---------------------------------------------------------------------------------
-
-||| Struct layout may differ by platform.
-public export
-PlatformLayout : Platform -> Type -> Type
-PlatformLayout p t = StructLayout
-
-||| Verify layout is correct for all platforms.
-public export
-verifyAllPlatforms :
-  (layouts : (p : Platform) -> PlatformLayout p t) ->
-  Either String ()
-verifyAllPlatforms layouts =
-  Right ()
 
 --------------------------------------------------------------------------------
 -- C ABI Compatibility
 --------------------------------------------------------------------------------
 
-||| Proof that a struct follows C ABI rules.
+||| A layout is C-ABI compliant when all of its fields are correctly aligned.
+||| (The total-size and total-alignment invariants are already carried by
+||| `StructLayout` itself, so a `CABICompliant` value certifies the full
+||| picture: well-sized, well-aligned struct with every field in place.)
 public export
 data CABICompliant : StructLayout -> Type where
   CABIOk :
@@ -137,11 +128,13 @@ data CABICompliant : StructLayout -> Type where
     FieldsAligned layout.fields ->
     CABICompliant layout
 
-||| Check if layout follows C ABI.
-public export
-checkCABI : (layout : StructLayout) -> Either String (CABICompliant layout)
-checkCABI layout =
-  Right (CABIOk layout ?fieldsAlignedProof)
+-- NOTE: there is deliberately no generic
+--   checkCABI : (l : StructLayout) -> Either String (CABICompliant l)
+-- Proving `FieldsAligned` for an *arbitrary* layout requires a per-field
+-- divisibility decision procedure that threads the evidence back into the
+-- proof term. The honest, fully machine-checked artefacts are the concrete
+-- `*Valid` instances below — Idris checks each at compile time. A runtime
+-- `Dec`-returning checker can be added later without weakening these proofs.
 
 --------------------------------------------------------------------------------
 -- OctadRecord Layout
@@ -183,11 +176,26 @@ octadRecordLayout =
     ]
     80  -- Total size: 80 bytes
     8   -- Alignment: 8 bytes
+    {aligned = DivideBy 10 Refl, sizeCorrect = Oh}  -- 80 = 10*8, and 80 >= sum(sizes)=80
 
-||| Proof that the OctadRecord layout is C-ABI compliant.
+||| Proof that the OctadRecord layout is C-ABI compliant: all 11 fields sit at
+||| offsets that are multiples of their respective 8- or 4-byte alignments.
 export
-octadRecordValid : CABICompliant octadRecordLayout
-octadRecordValid = CABIOk octadRecordLayout ?octadFieldsAligned
+octadRecordValid : CABICompliant Verisimiser.ABI.Layout.octadRecordLayout
+octadRecordValid =
+  CABIOk octadRecordLayout $
+    ConsField _ _ (DivideBy 0 Refl)      -- entity_id       @0  / 8
+    (ConsField _ _ (DivideBy 2 Refl)     -- backend         @8  / 4
+    (ConsField _ _ (DivideBy 3 Refl)     -- active_dims     @12 / 4
+    (ConsField _ _ (DivideBy 2 Refl)     -- provenance_ptr  @16 / 8
+    (ConsField _ _ (DivideBy 3 Refl)     -- temporal_ptr    @24 / 8
+    (ConsField _ _ (DivideBy 4 Refl)     -- drift_score_ptr @32 / 8
+    (ConsField _ _ (DivideBy 5 Refl)     -- lineage_ptr     @40 / 8
+    (ConsField _ _ (DivideBy 6 Refl)     -- constraints_ptr @48 / 8
+    (ConsField _ _ (DivideBy 7 Refl)     -- acl_ptr         @56 / 8
+    (ConsField _ _ (DivideBy 8 Refl)     -- simulation_ptr  @64 / 8
+    (ConsField _ _ (DivideBy 9 Refl)     -- metadata_ptr    @72 / 8
+    NoFields))))))))))
 
 --------------------------------------------------------------------------------
 -- ProvenanceEntry Layout
@@ -218,11 +226,20 @@ provenanceEntryLayout =
     ]
     88  -- Total size: 88 bytes
     8   -- Alignment: 8 bytes
+    {aligned = DivideBy 11 Refl, sizeCorrect = Oh}  -- 88 = 11*8, and 88 >= sum(sizes)=88
 
 ||| Proof that the ProvenanceEntry layout is C-ABI compliant.
 export
-provenanceEntryValid : CABICompliant provenanceEntryLayout
-provenanceEntryValid = CABIOk provenanceEntryLayout ?provenanceFieldsAligned
+provenanceEntryValid : CABICompliant Verisimiser.ABI.Layout.provenanceEntryLayout
+provenanceEntryValid =
+  CABIOk provenanceEntryLayout $
+    ConsField _ _ (DivideBy 0 Refl)      -- hash          @0  / 1
+    (ConsField _ _ (DivideBy 32 Refl)    -- previous_hash @32 / 1
+    (ConsField _ _ (DivideBy 8 Refl)     -- entity_id     @64 / 8
+    (ConsField _ _ (DivideBy 18 Refl)    -- operation     @72 / 4
+    (ConsField _ _ (DivideBy 19 Refl)    -- _padding      @76 / 4
+    (ConsField _ _ (DivideBy 10 Refl)    -- timestamp     @80 / 8
+    NoFields)))))
 
 --------------------------------------------------------------------------------
 -- DriftMeasurement Layout
@@ -248,11 +265,18 @@ driftMeasurementLayout =
     ]
     88  -- Total size: 88 bytes
     8   -- Alignment: 8 bytes
+    {aligned = DivideBy 11 Refl, sizeCorrect = Oh}  -- 88 = 11*8, and 88 >= sum(sizes)=88
 
 ||| Proof that the DriftMeasurement layout is C-ABI compliant.
 export
-driftMeasurementValid : CABICompliant driftMeasurementLayout
-driftMeasurementValid = CABIOk driftMeasurementLayout ?driftFieldsAligned
+driftMeasurementValid : CABICompliant Verisimiser.ABI.Layout.driftMeasurementLayout
+driftMeasurementValid =
+  CABIOk driftMeasurementLayout $
+    ConsField _ _ (DivideBy 0 Refl)      -- entity_id     @0  / 8
+    (ConsField _ _ (DivideBy 1 Refl)     -- overall_score @8  / 8
+    (ConsField _ _ (DivideBy 2 Refl)     -- scores        @16 / 8
+    (ConsField _ _ (DivideBy 10 Refl)    -- measured_at   @80 / 8
+    NoFields)))
 
 --------------------------------------------------------------------------------
 -- TemporalSnapshot Layout
@@ -284,25 +308,39 @@ temporalSnapshotLayout =
     ]
     48  -- Total size: 48 bytes
     8   -- Alignment: 8 bytes
+    {aligned = DivideBy 6 Refl, sizeCorrect = Oh}  -- 48 = 6*8, and 48 >= sum(sizes)=48
 
 ||| Proof that the TemporalSnapshot layout is C-ABI compliant.
 export
-temporalSnapshotValid : CABICompliant temporalSnapshotLayout
-temporalSnapshotValid = CABIOk temporalSnapshotLayout ?temporalFieldsAligned
+temporalSnapshotValid : CABICompliant Verisimiser.ABI.Layout.temporalSnapshotLayout
+temporalSnapshotValid =
+  CABIOk temporalSnapshotLayout $
+    ConsField _ _ (DivideBy 0 Refl)      -- entity_id    @0  / 8
+    (ConsField _ _ (DivideBy 1 Refl)     -- version      @8  / 8
+    (ConsField _ _ (DivideBy 2 Refl)     -- valid_from   @16 / 8
+    (ConsField _ _ (DivideBy 3 Refl)     -- valid_to     @24 / 8
+    (ConsField _ _ (DivideBy 4 Refl)     -- snapshot_ptr @32 / 8
+    (ConsField _ _ (DivideBy 10 Refl)    -- snapshot_len @40 / 4
+    (ConsField _ _ (DivideBy 11 Refl)    -- operation    @44 / 4
+    NoFields))))))
 
 --------------------------------------------------------------------------------
--- Offset Calculation
+-- Field Lookup
 --------------------------------------------------------------------------------
 
-||| Calculate field offset with proof of correctness.
+||| Look up a field by name, returning its index and the field itself.
 public export
-fieldOffset : (layout : StructLayout) -> (fieldName : String) -> Maybe (n : Nat ** Field)
+fieldOffset : (layout : StructLayout) -> (fieldName : String) -> Maybe (Nat, Field)
 fieldOffset layout name =
   case findIndex (\f => f.name == name) layout.fields of
-    Just idx => Just (finToNat idx ** index idx layout.fields)
-    Nothing => Nothing
+    Just idx => Just (finToNat idx, index idx layout.fields)
+    Nothing  => Nothing
 
-||| Proof that field offset is within struct bounds.
-public export
-offsetInBounds : (layout : StructLayout) -> (f : Field) -> So (f.offset + f.size <= layout.totalSize)
-offsetInBounds layout f = ?offsetInBoundsProof
+-- NOTE: there is deliberately no generic
+--   offsetInBounds : (l : StructLayout) -> (f : Field) -> So (f.offset + f.size <= l.totalSize)
+-- That statement is *false* for an arbitrary `f` and `l` (nothing forces a
+-- caller-supplied field to belong to the layout, let alone fit inside it).
+-- The in-bounds fact holds for the concrete layouts above — it is implied,
+-- field by field, by their offsets/sizes and the `sizeCorrect` invariant —
+-- and would be stated as a per-layout lemma over fields drawn from
+-- `layout.fields`, not as a universally-quantified claim over all fields.

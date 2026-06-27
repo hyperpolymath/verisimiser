@@ -4,6 +4,14 @@
 :toc:
 :icons: font
 
+[NOTE]
+====
+Items are ticked `[x]` only when machine-checked or otherwise demonstrably
+done. The ABI proofs, FFI, and codegen are gated by
+`.github/workflows/provable.yml` (see `docs/developer/ABI-FFI-README.adoc`):
+an unticked box means the claim is not yet verified, not merely undocumented.
+====
+
 == Phase 0: Scaffold (COMPLETE)
 * [x] RSR template with full CI/CD
 * [x] CLI with subcommands (init, start, drift, provenance, history, status, octad, doctor, gc, validate, version)
@@ -13,6 +21,10 @@
 * [x] ABI module stubs (Idris2 + Zig FFI) and domain-tagged `compute_hash`
 * [x] Drift categories pinned (ADR-0003): input / distance / threshold per category
 * [x] README rewritten around concerns octad (V-L1-A2, #20)
+* [x] ABI proofs machine-checked + FFI built/tested in CI (`provable.yml`):
+  octad cardinality, C-struct layout/alignment (`CABICompliant` ×4), non-null
+  handle invariants, Tier-1 sidecar isolation; Zig FFI 43 tests; codegen golden
+  + SQLite-apply check
 
 == Phase 1: PostgreSQL Tier 1 MVP — concerns layered onto your DB
 * [ ] PostgreSQL logical replication interception (Data / Metadata feed)
@@ -23,8 +35,16 @@
 * [ ] **Constraints** / drift detection — read-path observer; eight categories (ADR-0003)
 * [x] **Constraints** category 1 of 8: Temporal drift detector (V-L1-E2 / #49)
 * [ ] **Constraints** categories 2–8 of 8: Structural, Semantic, Statistical, Referential, Provenance, Spatial, Embedding
-* [ ] Idris2 ABI proofs: sidecar isolation, hash-chain integrity, version ordering, lineage acyclicity
-* [ ] Zig FFI bridge: database connection, sidecar operations, VCL-total queries
+* [ ] Idris2 ABI proofs (partial — gated by `provable.yml`):
+** [x] sidecar isolation (Tier-1 never writes the target table)
+** [x] C-struct layout + alignment (`CABICompliant` for all four ABI structs)
+** [ ] hash-chain integrity, version ordering, lineage acyclicity — today
+   enforced at runtime in Rust + SQL `CHECK` constraints; not yet lifted into
+   Idris proofs
+* [ ] Zig FFI bridge (partial — gated by `provable.yml`):
+** [x] C-ABI surface declared (`Foreign.idr`), implemented in Zig, 43 tests pass
+** [ ] live database connection, sidecar operations, VCL-total queries —
+   TODO-stubbed in the Zig layer; the working implementation lives in the Rust CLI
 * [ ] End-to-end test: PostgreSQL → verisimiser concerns → VCL-total query
 
 == Phase 2: Multi-Backend Support

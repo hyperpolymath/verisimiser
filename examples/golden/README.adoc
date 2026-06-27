@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: MPL-2.0
+= VeriSimiser Codegen Golden Sample
+:toc: macro
+:source-highlighter: rouge
+
+This directory is the *frozen golden sample* that the `codegen-drift` and
+`sql-golden` jobs of `.github/workflows/provable.yml` check on every push and
+pull request. It exists to turn "the generator produces correct SQL" from a
+prose claim into a machine-checked fact.
+
+toc::[]
+
+== What's here
+
+[cols="1,3"]
+|===
+| File | Role
+
+| `verisimiser.toml`
+| Frozen input manifest (SQLite backend, 7 of 8 octad dimensions enabled).
+
+| `schema.sql`
+| Frozen input schema — two tables (`users`, `posts`) with a typical author
+  relationship and a spread of column types.
+
+| `generated/sidecar_schema.sql`
+| Committed expected output: the octad sidecar overlay DDL.
+
+| `generated/interceptors.sql`
+| Committed expected output: the per-table provenance/temporal enrichment
+  views and lineage/access-control query templates.
+|===
+
+== What the CI checks
+
+`codegen-drift`:: regenerates `generated/` from `verisimiser.toml` + `schema.sql`
+into a temp directory and `diff`s it against the committed tree. The generator
+is deterministic, so any difference fails the job — this catches *unintended*
+changes to codegen output.
+
+`sql-golden`:: applies `schema.sql`, then the two generated files, into a fresh
+SQLite database and asserts every sidecar table and enrichment view is created
+and queryable. This is the SQL analogue of "the generated code compiles and
+runs": it proves the emitted DDL is valid and applies cleanly against the
+target schema (the views use `ROW_NUMBER() OVER (…)`, so SQLite >= 3.25).
+
+== Regenerating after an intentional codegen change
+
+If you change the generator and the new output is correct, refresh the golden
+in the *same* PR as the code change:
+
+[source,sh]
+----
+cargo build
+( cd examples/golden && ../../target/debug/verisimiser generate -m verisimiser.toml -o generated )
+git add examples/golden/generated
+----
+
+Then review the diff carefully — it is the human-readable record of how your
+change affected every consumer's generated overlay.

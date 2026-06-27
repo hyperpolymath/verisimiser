@@ -8,29 +8,35 @@
 const std = @import("std");
 const testing = std.testing;
 
+// Opaque handle type: C callers (and these tests) only ever hold a pointer to
+// it. Declaring it once — rather than inline `?*Handle` per declaration —
+// means every signature shares the *same* opaque type, so the handle returned
+// by `verisimiser_init` is accepted by every other function.
+const Handle = opaque {};
+
 // Import VeriSimiser FFI functions
-extern fn verisimiser_init() ?*opaque {};
-extern fn verisimiser_free(?*opaque {}) void;
-extern fn verisimiser_connect(?*opaque {}, u32, u64) u64;
-extern fn verisimiser_disconnect(?*opaque {}, u64) void;
-extern fn verisimiser_enable_dimension(?*opaque {}, u64, u32) c_int;
-extern fn verisimiser_get_active_dimensions(?*opaque {}, u64) u32;
-extern fn verisimiser_record_provenance(?*opaque {}, u64, u32, u64) c_int;
-extern fn verisimiser_verify_provenance(?*opaque {}, u64) c_int;
-extern fn verisimiser_provenance_length(?*opaque {}, u64) u64;
-extern fn verisimiser_record_version(?*opaque {}, u64, u64, u32) c_int;
-extern fn verisimiser_query_at_time(?*opaque {}, u64, u64) u64;
-extern fn verisimiser_current_version(?*opaque {}, u64) u64;
-extern fn verisimiser_measure_drift(?*opaque {}, u64) u64;
-extern fn verisimiser_drift_score(?*opaque {}, u64) f64;
-extern fn verisimiser_drift_category_score(?*opaque {}, u64, u32) f64;
-extern fn verisimiser_vql_query(?*opaque {}, u64) u64;
+extern fn verisimiser_init() ?*Handle;
+extern fn verisimiser_free(?*Handle) void;
+extern fn verisimiser_connect(?*Handle, u32, u64) u64;
+extern fn verisimiser_disconnect(?*Handle, u64) void;
+extern fn verisimiser_enable_dimension(?*Handle, u64, u32) c_int;
+extern fn verisimiser_get_active_dimensions(?*Handle, u64) u32;
+extern fn verisimiser_record_provenance(?*Handle, u64, u32, u64) c_int;
+extern fn verisimiser_verify_provenance(?*Handle, u64) c_int;
+extern fn verisimiser_provenance_length(?*Handle, u64) u64;
+extern fn verisimiser_record_version(?*Handle, u64, u64, u32) c_int;
+extern fn verisimiser_query_at_time(?*Handle, u64, u64) u64;
+extern fn verisimiser_current_version(?*Handle, u64) u64;
+extern fn verisimiser_measure_drift(?*Handle, u64) u64;
+extern fn verisimiser_drift_score(?*Handle, u64) f64;
+extern fn verisimiser_drift_category_score(?*Handle, u64, u32) f64;
+extern fn verisimiser_vql_query(?*Handle, u64) u64;
 extern fn verisimiser_vql_free_result(u64) void;
-extern fn verisimiser_get_string(?*opaque {}) ?[*:0]const u8;
+extern fn verisimiser_get_string(?*Handle) ?[*:0]const u8;
 extern fn verisimiser_free_string(?[*:0]const u8) void;
 extern fn verisimiser_last_error() ?[*:0]const u8;
 extern fn verisimiser_version() [*:0]const u8;
-extern fn verisimiser_is_initialized(?*opaque {}) u32;
+extern fn verisimiser_is_initialized(?*Handle) u32;
 extern fn verisimiser_backend_supported(u32) u32;
 
 //==============================================================================
@@ -38,10 +44,12 @@ extern fn verisimiser_backend_supported(u32) u32;
 //==============================================================================
 
 test "create and destroy VeriSimiser handle" {
+    // `orelse return error.InitFailed` already proves the handle is non-null;
+    // the body just confirms init succeeds and free (via defer) does not crash.
     const handle = verisimiser_init() orelse return error.InitFailed;
     defer verisimiser_free(handle);
 
-    try testing.expect(handle != null);
+    try testing.expectEqual(@as(u32, 1), verisimiser_is_initialized(handle));
 }
 
 test "handle is initialized" {
@@ -301,7 +309,7 @@ test "concurrent provenance operations" {
     defer verisimiser_free(handle);
 
     const ThreadContext = struct {
-        h: *opaque {},
+        h: *Handle,
         entity_id: u64,
     };
 

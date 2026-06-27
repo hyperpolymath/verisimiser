@@ -1,384 +1,234 @@
-= ABI/FFI Standards
-{{~ Aditionally delete this line and fill out the template below ~}}
+// SPDX-License-Identifier: MPL-2.0
+= VeriSimiser ABI / FFI
+:toc: macro
+:source-highlighter: rouge
 
-# {{PROJECT}} ABI/FFI Documentation
+How VeriSimiser exposes its octad-augmentation core across a C ABI: an Idris2
+ABI carrying machine-checked proofs, a Zig FFI implementing the C-compatible
+surface, and the contract between them. Everything described here is verified
+in CI by `.github/workflows/provable.yml`; this document tracks what is
+actually in the tree, not an aspiration.
 
-## Overview
+toc::[]
 
-This library follows the **Hyperpolymath RSR Standard** for ABI and FFI design:
+== Layout
 
-- **ABI (Application Binary Interface)** defined in **Idris2** with formal proofs
-- **FFI (Foreign Function Interface)** implemented in **Zig** for C compatibility
-- **Generated C headers** bridge Idris2 ABI to Zig FFI
-- **Any language** can call through standard C ABI
+[cols="1,3"]
+|===
+| Path | Role
 
-## Architecture
+| `src/interface/abi/Verisimiser/ABI/Types.idr`
+| Core ABI types (octad dimensions, backends, result codes) and their proofs.
 
-```
-┌─────────────────────────────────────────────┐
-│  ABI Definitions (Idris2)                   │
-│  src/abi/                                   │
-│  - Types.idr      (Type definitions)        │
-│  - Layout.idr     (Memory layout proofs)    │
-│  - Foreign.idr    (FFI declarations)        │
-└─────────────────┬───────────────────────────┘
-                  │
-                  │ generates (at compile time)
-                  ▼
-┌─────────────────────────────────────────────┐
-│  C Headers (auto-generated)                 │
-│  generated/abi/{{project}}.h                │
-└─────────────────┬───────────────────────────┘
-                  │
-                  │ imported by
-                  ▼
-┌─────────────────────────────────────────────┐
-│  FFI Implementation (Zig)                   │
-│  ffi/zig/src/main.zig                       │
-│  - Implements C-compatible functions        │
-│  - Zero-cost abstractions                   │
-│  - Memory-safe by default                   │
-└─────────────────┬───────────────────────────┘
-                  │
-                  │ compiled to lib{{project}}.so/.a
-                  ▼
-┌─────────────────────────────────────────────┐
-│  Any Language via C ABI                     │
-│  - Rust, ReScript, Julia, Python, etc.     │
-└─────────────────────────────────────────────┘
-```
+| `src/interface/abi/Verisimiser/ABI/Layout.idr`
+| C-struct memory-layout proofs (size, alignment, per-field offset).
 
-## Directory Structure
+| `src/interface/abi/Verisimiser/ABI/Foreign.idr`
+| `%foreign` declarations + safe Idris wrappers for every C symbol.
 
-```
-{{project}}/
-├── src/
-│   ├── abi/                    # ABI definitions (Idris2)
-│   │   ├── Types.idr           # Core type definitions with proofs
-│   │   ├── Layout.idr          # Memory layout verification
-│   │   └── Foreign.idr         # FFI function declarations
-│   └── lib/                    # Core library (any language)
-│
-├── ffi/
-│   └── zig/                    # FFI implementation (Zig)
-│       ├── build.zig           # Build configuration
-│       ├── build.zig.zon       # Dependencies
-│       ├── src/
-│       │   └── main.zig        # C-compatible FFI implementation
-│       ├── test/
-│       │   └── integration_test.zig
-│       └── include/
-│           └── {{project}}.h   # C header (optional, can be generated)
-│
-├── generated/                  # Auto-generated files
-│   └── abi/
-│       └── {{project}}.h       # Generated from Idris2 ABI
-│
-└── bindings/                   # Language-specific wrappers (optional)
-    ├── rust/
-    ├── rescript/
-    └── julia/
-```
+| `src/interface/ffi/src/main.zig`
+| The Zig implementation of the C-ABI surface (`export fn verisimiser_*`).
 
-## Why Idris2 for ABI?
+| `src/interface/ffi/test/integration_test.zig`
+| Tests that call the exported symbols through the compiled shared library.
 
-### 1. **Formal Verification**
+| `src/interface/ffi/build.zig`
+| Build: shared + static lib, `zig build test` (unit + integration).
+|===
 
-Idris2's dependent types allow proving properties about the ABI at compile-time:
+NOTE: The module path mirrors the module name (`Verisimiser.ABI.*`), so the
+`.idr` files live under `Verisimiser/ABI/`. Run `idris2` from
+`src/interface/abi` so the import root resolves.
 
-```idris
--- Prove struct size is correct
-public export
-exampleStructSize : HasSize ExampleStruct 16
+== What is actually proven
 
--- Prove field alignment is correct
-public export
-fieldAligned : Divides 8 (offsetOf ExampleStruct.field)
+The Idris2 ABI is not decorative — these are total, hole-free proofs that
+`idris2 --check` verifies on every CI run. The load-bearing ones:
 
--- Prove ABI is platform-compatible
-public export
-abiCompatible : Compatible (ABI 1) (ABI 2)
-```
+[cols="1,2"]
+|===
+| Proof (module) | Statement
 
-### 2. **Type Safety**
+| `octadIsEight` (`Types`)
+| The canonical dimension list has exactly 8 entries — the "octad" invariant,
+  by `Refl`.
 
-Encode invariants that C/Zig cannot express:
+| Non-null `Handle` / `DbConnection` (`Types`)
+| A handle can only be constructed from a non-zero pointer
+  (`{auto 0 nonNull : So (ptr /= 0)}`); `createHandle` / `createDbConnection`
+  use `choose` to discharge it, so a null pointer yields `Nothing`, never a
+  bogus handle.
 
-```idris
--- Non-null pointer guaranteed at type level
-data Handle : Type where
-  MkHandle : (ptr : Bits64) -> {auto 0 nonNull : So (ptr /= 0)} -> Handle
+| `tier1NeverWritesTarget` (`Types`)
+| Tier-1 sidecar isolation: a Tier-1 dimension's storage is the sidecar, never
+  the target table — encoded so a counterexample does not type-check.
 
--- Array with length proof
-data Buffer : (n : Nat) -> Type where
-  MkBuffer : Vect n Byte -> Buffer n
-```
+| `octadRecordValid`, `provenanceEntryValid`, `driftMeasurementValid`,
+  `temporalSnapshotValid` (`Layout`)
+| Each concrete C-struct layout is `CABICompliant`: its declared size is a
+  multiple of its alignment, it is at least as large as the sum of its fields
+  (`StructLayout`'s `aligned` / `sizeCorrect` invariants), and every field sits
+  at an offset that is a multiple of that field's alignment (`FieldsAligned`).
 
-### 3. **Platform Abstraction**
+| `alignUpCorrect` (`Layout`)
+| The generic rounding lemma: `alignUp size align` is always a multiple of
+  `align`. `alignUp` is *defined* as `ceilDiv size align * align`, so this is
+  unconditional (it even holds for the degenerate `align = 0`).
+|===
 
-Platform-specific types with compile-time selection:
+What is deliberately *not* claimed: there is no generic `checkCABI` or
+`offsetInBounds` over arbitrary layouts/fields — the latter is simply false for
+an arbitrary field, and the former needs a per-field decision procedure. The
+honest, machine-checked artefacts are the concrete `*Valid` instances above.
+See the NOTE comments in `Layout.idr` for the reasoning.
 
-```idris
-CInt : Platform -> Type
-CInt Linux = Bits32
-CInt Windows = Bits32
+== The C-ABI surface
 
-CSize : Platform -> Type
-CSize Linux = Bits64
-CSize Windows = Bits64
-```
+Every symbol is `export fn` in `main.zig` and declared in `Foreign.idr`.
+Handles are opaque: C callers only ever hold a `void*`. Result codes
+(`verisimiser_*` returning `int`) follow the `Result` enum:
 
-### 4. **Safe Evolution**
+[cols="1,1,4"]
+|===
+| Code | Name | Meaning
+| 0 | `ok` | success
+| 1 | `error` | generic failure
+| 2 | `invalid_param` | argument out of range (e.g. unknown dimension/operation)
+| 3 | `out_of_memory` | allocation failed
+| 4 | `null_pointer` | a required pointer argument was null
+| 5 | `connection_failed` | target database connection failed
+| 6 | `chain_corrupted` | provenance hash-chain integrity violation
+| 7 | `sidecar_unavailable` | sidecar storage unavailable
+|===
 
-Prove that new ABI versions are backward-compatible:
+Function groups (see `Foreign.idr` for exact signatures): lifecycle
+(`init`, `free`), connection (`connect`, `disconnect`), octad overlay
+(`enable_dimension`, `get_active_dimensions`), Tier-1 provenance
+(`record_provenance`, `verify_provenance`, `provenance_length`), Tier-1
+temporal (`record_version`, `query_at_time`, `current_version`), Tier-1 drift
+(`measure_drift`, `drift_score`, `drift_category_score`), VCL-total queries
+(`vql_query`, `vql_free_result`), strings (`get_string`, `free_string`),
+errors (`last_error`), version (`version`, `build_info`), and utilities
+(`is_initialized`, `backend_supported`).
 
-```idris
--- Compiler enforces compatibility
-abiUpgrade : ABI 1 -> ABI 2
-abiUpgrade old = MkABI2 {
-  -- Must preserve all v1 fields
-  v1_compat = old,
-  -- Can add new fields
-  new_features = defaults
-}
-```
+NOTE: A C header is not auto-generated today. `Foreign.idr` and `main.zig` are
+the authoritative signatures; bind against them directly (examples below). A
+hand-written `include/verisimiser.h` is tracked as future work — until it
+exists, the `build.zig` does not try to install one.
 
-## Why Zig for FFI?
+== Building and testing
 
-### 1. **C ABI Compatibility**
+[source,sh]
+----
+# Idris2 ABI — type-check the proofs (run from the ABI root)
+cd src/interface/abi
+idris2 --check Verisimiser/ABI/Types.idr
+idris2 --check Verisimiser/ABI/Layout.idr
+idris2 --check Verisimiser/ABI/Foreign.idr
 
-Zig exports C-compatible functions naturally:
+# Zig FFI — build the libraries and run all tests
+cd src/interface/ffi
+zig build                 # shared + static lib into zig-out/lib
+zig build test            # 8 unit tests + 35 C-ABI integration tests
+zig build test-unit       # in-module unit tests only
+zig build test-integration  # C-ABI integration tests only
 
-```zig
-export fn library_function(param: i32) i32 {
-    return param * 2;
-}
-```
+# Cross-compile the FFI to another target
+zig build -Dtarget=aarch64-linux
+----
 
-### 2. **Memory Safety**
+== Usage
 
-Compile-time safety without runtime overhead:
+=== From C
 
-```zig
-// Null check enforced at compile time
-const handle = init() orelse return error.InitFailed;
-defer free(handle);
-```
+[source,c]
+----
+// Signatures mirror Foreign.idr / main.zig (no generated header yet — declare
+// the symbols you call, or write a thin verisimiser.h of your own).
+#include <stdint.h>
+#include <stdio.h>
 
-### 3. **Cross-Compilation**
+extern void *verisimiser_init(void);
+extern void  verisimiser_free(void *handle);
+extern int   verisimiser_enable_dimension(void *handle, uint64_t entity, uint32_t dim);
+extern int   verisimiser_record_provenance(void *handle, uint64_t entity,
+                                           uint32_t op, uint64_t actor);
+extern const char *verisimiser_last_error(void);
 
-Built-in cross-compilation to any platform:
+int main(void) {
+    void *h = verisimiser_init();
+    if (!h) return 1;
 
-```bash
-zig build -Dtarget=x86_64-linux
-zig build -Dtarget=aarch64-macos
-zig build -Dtarget=x86_64-windows
-```
-
-### 4. **Zero Dependencies**
-
-No runtime, no libc required (unless explicitly needed):
-
-```zig
-// Minimal binary size
-pub const lib = @import("std");
-// Only includes what you use
-```
-
-## Building
-
-### Build FFI Library
-
-```bash
-cd ffi/zig
-zig build                         # Build debug
-zig build -Doptimize=ReleaseFast  # Build optimized
-zig build test                    # Run tests
-```
-
-### Generate C Header from Idris2 ABI
-
-```bash
-cd src/abi
-idris2 --cg c-header Types.idr -o ../../generated/abi/{{project}}.h
-```
-
-### Cross-Compile
-
-```bash
-cd ffi/zig
-
-# Linux x86_64
-zig build -Dtarget=x86_64-linux
-
-# macOS ARM64
-zig build -Dtarget=aarch64-macos
-
-# Windows x86_64
-zig build -Dtarget=x86_64-windows
-```
-
-## Usage
-
-### From C
-
-```c
-#include "{{project}}.h"
-
-int main() {
-    void* handle = {{project}}_init();
-    if (!handle) return 1;
-
-    int result = {{project}}_process(handle, 42);
-    if (result != 0) {
-        const char* err = {{project}}_last_error();
-        fprintf(stderr, "Error: %s\n", err);
+    // Enable the Provenance dimension (2) for entity 42, then record a create (0).
+    if (verisimiser_enable_dimension(h, 42, 2) != 0 ||
+        verisimiser_record_provenance(h, 42, 0, 0) != 0) {
+        fprintf(stderr, "error: %s\n", verisimiser_last_error());
     }
 
-    {{project}}_free(handle);
+    verisimiser_free(h);
     return 0;
 }
-```
+----
 
-Compile with:
-```bash
-gcc -o example example.c -l{{project}} -L./zig-out/lib
-```
+Compile with `cc example.c -lverisimiser -L src/interface/ffi/zig-out/lib`.
 
-### From Idris2
+=== From Idris2 (the safe wrappers)
 
-```idris
-import {{PROJECT}}.ABI.Foreign
+[source,idris]
+----
+import Verisimiser.ABI.Foreign
 
 main : IO ()
 main = do
-  Just handle <- init
-    | Nothing => putStrLn "Failed to initialize"
+  Just h <- init
+    | Nothing => putStrLn "init failed"
+  Right () <- enableDimension h 42 Provenance
+    | Left err => putStrLn (errorDescription err)
+  free h
+----
 
-  Right result <- process handle 42
-    | Left err => putStrLn $ "Error: " ++ errorDescription err
+=== From Rust
 
-  free handle
-  putStrLn "Success"
-```
-
-### From Rust
-
-```rust
-#[link(name = "{{project}}")]
-extern "C" {
-    fn {{project}}_init() -> *mut std::ffi::c_void;
-    fn {{project}}_free(handle: *mut std::ffi::c_void);
-    fn {{project}}_process(handle: *mut std::ffi::c_void, input: u32) -> i32;
+[source,rust]
+----
+#[link(name = "verisimiser")]
+unsafe extern "C" {
+    fn verisimiser_init() -> *mut core::ffi::c_void;
+    fn verisimiser_free(handle: *mut core::ffi::c_void);
+    fn verisimiser_backend_supported(backend_id: u32) -> u32;
 }
 
 fn main() {
     unsafe {
-        let handle = {{project}}_init();
-        assert!(!handle.is_null());
-
-        let result = {{project}}_process(handle, 42);
-        assert_eq!(result, 0);
-
-        {{project}}_free(handle);
+        let h = verisimiser_init();
+        assert!(!h.is_null());
+        assert_eq!(verisimiser_backend_supported(1), 1); // sqlite
+        verisimiser_free(h);
     }
 }
-```
+----
 
-### From Julia
+=== From Julia / Deno
 
-```julia
-const lib{{project}} = "lib{{project}}"
+The same C symbols are callable via Julia `ccall` or a Deno FFI
+`Deno.dlopen` over `libverisimiser`; the argument/return types are the C
+types in the table above (`void*` handles, `uint32`/`uint64`/`int`/`double`).
 
-function init()
-    handle = ccall((:{{project}}_init, lib{{project}}), Ptr{Cvoid}, ())
-    handle == C_NULL && error("Failed to initialize")
-    handle
-end
+== Contributing — order of changes
 
-function process(handle, input)
-    result = ccall((:{{project}}_process, lib{{project}}), Cint, (Ptr{Cvoid}, UInt32), handle, input)
-    result
-end
+When you touch the ABI/FFI, keep the layers in lock-step:
 
-function cleanup(handle)
-    ccall((:{{project}}_free, lib{{project}}), Cvoid, (Ptr{Cvoid},), handle)
-end
+. *Idris2 ABI first* (`src/interface/abi/Verisimiser/ABI/*.idr`): change the
+  types/layouts, update the affected proofs, and re-run `idris2 --check` until
+  clean. If you add a struct, add its `StructLayout` witnesses and a
+  `*Valid : CABICompliant` proof.
+. *Zig FFI* (`src/interface/ffi/src/main.zig`): match the new types exactly;
+  keep enum discriminants identical to the Idris `Result` / `OctadDimension` /
+  `DatabaseBackend` values.
+. *Tests*: extend the in-module unit tests and the C-ABI integration tests.
+. *Verify*: `zig build test` and the three `idris2 --check`s must pass — the
+  `provable.yml` workflow runs exactly these.
 
-# Usage
-handle = init()
-try
-    result = process(handle, 42)
-    println("Result: $result")
-finally
-    cleanup(handle)
-end
-```
+== License
 
-## Testing
-
-### Unit Tests (Zig)
-
-```bash
-cd ffi/zig
-zig build test
-```
-
-### Integration Tests
-
-```bash
-cd ffi/zig
-zig build test-integration
-```
-
-### ABI Verification (Idris2)
-
-```idris
--- Compile-time verification
-%runElab verifyABI
-
--- Runtime checks
-main : IO ()
-main = do
-  verifyLayoutsCorrect
-  verifyAlignmentsCorrect
-  putStrLn "ABI verification passed"
-```
-
-## Contributing
-
-When modifying the ABI/FFI:
-
-1. **Update ABI first** (`src/abi/*.idr`)
-   - Modify type definitions
-   - Update proofs
-   - Ensure backward compatibility
-
-2. **Generate C header**
-   ```bash
-   idris2 --cg c-header src/abi/Types.idr -o generated/abi/{{project}}.h
-   ```
-
-3. **Update FFI implementation** (`ffi/zig/src/main.zig`)
-   - Implement new functions
-   - Match ABI types exactly
-
-4. **Add tests**
-   - Unit tests in Zig
-   - Integration tests
-   - ABI verification tests
-
-5. **Update documentation**
-   - Function signatures
-   - Usage examples
-   - Migration guide (if breaking changes)
-
-## License
-
-{{LICENSE}}
-
-## See Also
-
-- [Idris2 Documentation](https://idris2.readthedocs.io)
-- [Zig Documentation](https://ziglang.org/documentation/master/)
-- [Rhodium Standard Repositories](https://github.com/hyperpolymath/rhodium-standard-repositories)
+MPL-2.0. See `LICENSE`.
