@@ -5,8 +5,8 @@
 # Read 0-AI-MANIFEST.a2ml in the repo root FIRST for canonical file locations.
 
 # LICENSE
-# All original code: PMPL-1.0-or-later (SPDX header required on every file).
-# Never use AGPL-3.0. Fallback to MPL-2.0 only when platform requires it.
+# Code + config: MPL-2.0 (SPDX header required on every file). Docs prose: CC-BY-SA-4.0.
+# Never use AGPL-3.0.
 # Copyright: {{AUTHOR}} ({{OWNER}}) <{{AUTHOR_EMAIL}}>
 
 # STATE FILES
