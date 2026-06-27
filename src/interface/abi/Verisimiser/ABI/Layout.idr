@@ -28,6 +28,8 @@ import Verisimiser.ABI.Types
 import Data.Vect
 import Data.Fin
 import Data.So
+import Data.Nat
+import Decidable.Equality
 
 %default total
 
@@ -54,6 +56,18 @@ public export
 ceilDiv : (n : Nat) -> (d : Nat) -> Nat
 ceilDiv n d = (n + minus d 1) `div` d
 
+||| Sound decision procedure for divisibility. Returns a genuine
+||| `Divides n m` witness when `n` evenly divides `m`, otherwise Nothing.
+||| Division by zero is undecidable here and yields Nothing.
+public export
+decDivides : (n : Nat) -> (m : Nat) -> Maybe (Divides n m)
+decDivides Z _ = Nothing
+decDivides (S k) m =
+  let q = m `div` (S k) in
+  case decEq m (q * (S k)) of
+    Yes prf => Just (DivideBy q prf)
+    No _ => Nothing
+
 ||| Round `size` up to the next multiple of `alignment`.
 |||
 ||| Defined as `ceilDiv size alignment * alignment` so that the result is
@@ -68,6 +82,12 @@ alignUp size alignment = ceilDiv size alignment * alignment
 public export
 alignUpCorrect : (size : Nat) -> (align : Nat) -> Divides align (alignUp size align)
 alignUpCorrect size align = DivideBy (ceilDiv size align) Refl
+
+||| Decidable-form wrapper for callers that want the same fact in `Maybe`.
+public export
+alignUpDivides : (size : Nat) -> (align : Nat) ->
+                 Maybe (Divides align (alignUp size align))
+alignUpDivides size align = Just (alignUpCorrect size align)
 
 --------------------------------------------------------------------------------
 -- Struct Field Layout
@@ -113,6 +133,18 @@ data FieldsAligned : {0 n : Nat} -> Vect n Field -> Type where
     FieldsAligned rest ->
     FieldsAligned (f :: rest)
 
+||| Decide field alignment for every field, building a real `FieldsAligned`
+||| witness from per-field divisibility proofs.
+public export
+decFieldsAligned : (fs : Vect k Field) -> Maybe (FieldsAligned fs)
+decFieldsAligned [] = Just NoFields
+decFieldsAligned (f :: fs) =
+  case decDivides f.alignment f.offset of
+    Nothing => Nothing
+     Just dvd => case decFieldsAligned fs of
+                   Nothing => Nothing
+                   Just rest => Just (ConsField f fs dvd rest)
+
 --------------------------------------------------------------------------------
 -- C ABI Compatibility
 --------------------------------------------------------------------------------
@@ -128,13 +160,15 @@ data CABICompliant : StructLayout -> Type where
     FieldsAligned layout.fields ->
     CABICompliant layout
 
--- NOTE: there is deliberately no generic
---   checkCABI : (l : StructLayout) -> Either String (CABICompliant l)
--- Proving `FieldsAligned` for an *arbitrary* layout requires a per-field
--- divisibility decision procedure that threads the evidence back into the
--- proof term. The honest, fully machine-checked artefacts are the concrete
--- `*Valid` instances below — Idris checks each at compile time. A runtime
--- `Dec`-returning checker can be added later without weakening these proofs.
+||| Verify a layout against the C ABI alignment rules, returning a genuine
+||| `CABICompliant` proof (built from real per-field divisibility witnesses)
+||| or an error when some field offset is misaligned.
+public export
+checkCABI : (layout : StructLayout) -> Either String (CABICompliant layout)
+checkCABI layout =
+  case decFieldsAligned layout.fields of
+    Just prf => Right (CABIOk layout prf)
+    Nothing => Left "Field offsets are not correctly aligned for the C ABI"
 
 --------------------------------------------------------------------------------
 -- OctadRecord Layout
@@ -334,13 +368,16 @@ fieldOffset : (layout : StructLayout) -> (fieldName : String) -> Maybe (Nat, Fie
 fieldOffset layout name =
   case findIndex (\f => f.name == name) layout.fields of
     Just idx => Just (finToNat idx, index idx layout.fields)
-    Nothing  => Nothing
+    Nothing => Nothing
 
--- NOTE: there is deliberately no generic
---   offsetInBounds : (l : StructLayout) -> (f : Field) -> So (f.offset + f.size <= l.totalSize)
--- That statement is *false* for an arbitrary `f` and `l` (nothing forces a
--- caller-supplied field to belong to the layout, let alone fit inside it).
--- The in-bounds fact holds for the concrete layouts above — it is implied,
--- field by field, by their offsets/sizes and the `sizeCorrect` invariant —
--- and would be stated as a per-layout lemma over fields drawn from
--- `layout.fields`, not as a universally-quantified claim over all fields.
+||| Decide whether a field lies within a struct's byte bounds, returning a
+||| genuine proof when `offset + size <= totalSize`. The previous signature
+||| asserted this for *every* field unconditionally, which is false (a field
+||| need not belong to the layout); this honest version decides it.
+public export
+offsetInBounds : (layout : StructLayout) -> (f : Field) ->
+                 Maybe (So (f.offset + f.size <= layout.totalSize))
+offsetInBounds layout f =
+  case choose (f.offset + f.size <= layout.totalSize) of
+    Left ok => Just ok
+    Right _ => Nothing

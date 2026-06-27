@@ -1,0 +1,12 @@
+-- SPDX-License-Identifier: MPL-2.0
+-- Idris2 package for the verisimiser ABI formal proofs.
+-- Build/check with:  idris2 --build verisimiser-abi.ipkg   (from src/interface/abi/)
+package verisimiser-abi
+
+sourcedir = "."
+
+modules = Verisimiser.ABI.Types
+        , Verisimiser.ABI.Layout
+        , Verisimiser.ABI.Foreign
+        , Verisimiser.ABI.Proofs
+        , Verisimiser.ABI.Octad

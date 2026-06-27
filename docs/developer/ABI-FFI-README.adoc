@@ -74,13 +74,18 @@ The Idris2 ABI is not decorative — these are total, hole-free proofs that
 | The generic rounding lemma: `alignUp size align` is always a multiple of
   `align`. `alignUp` is *defined* as `ceilDiv size align * align`, so this is
   unconditional (it even holds for the degenerate `align = 0`).
+
+| `checkCABI`, `offsetInBounds` (`Layout`)
+| Generic layout checks are decision procedures, not unconditional claims:
+  `checkCABI` returns either a real `CABICompliant` witness or an error, and
+  `offsetInBounds` returns `Maybe (So (...))` rather than pretending an
+  arbitrary field must belong to an arbitrary layout.
 |===
 
-What is deliberately *not* claimed: there is no generic `checkCABI` or
-`offsetInBounds` over arbitrary layouts/fields — the latter is simply false for
-an arbitrary field, and the former needs a per-field decision procedure. The
-honest, machine-checked artefacts are the concrete `*Valid` instances above.
-See the NOTE comments in `Layout.idr` for the reasoning.
+What is deliberately *not* claimed: generic layout helpers prove all arbitrary
+inputs valid. Bad inputs stay representable and are rejected by `Either` /
+`Maybe`. The unconditional, machine-checked artefacts are the concrete
+`*Valid` instances above.
 
 == The C-ABI surface
 
@@ -125,6 +130,8 @@ cd src/interface/abi
 idris2 --check Verisimiser/ABI/Types.idr
 idris2 --check Verisimiser/ABI/Layout.idr
 idris2 --check Verisimiser/ABI/Foreign.idr
+idris2 --check Verisimiser/ABI/Proofs.idr
+idris2 --check Verisimiser/ABI/Octad.idr
 
 # Zig FFI — build the libraries and run all tests
 cd src/interface/ffi

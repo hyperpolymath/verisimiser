@@ -1,6 +1,6 @@
 = RSR Template Repository
 
-image:[Palimpsest-MPL-1.0,link="https://github.com/hyperpolymath/palimpsest-license"] image:[Palimpsest,link="https://github.com/hyperpolymath/palimpsest-license"]
+image:https://img.shields.io/badge/license-MPL--2.0-blue[MPL-2.0,link="LICENSES/MPL-2.0.txt"] image:https://img.shields.io/badge/docs-CC--BY--SA--4.0-blue[CC-BY-SA-4.0,link="LICENSES/CC-BY-SA-4.0.txt"]
 :toc:
 :sectnums:
 
@@ -78,7 +78,7 @@ just validate-rsr
 |Container build (Wolfi base, Podman)
 
 |`LICENSE`
-|PMPL-1.0-or-later (Palimpsest MPL)
+|MPL-2.0 (code) / CC-BY-SA-4.0 (docs)
 
 |`EXHIBIT-A-ETHICAL-USE.txt`
 |Ethical use guidelines (LICENSE Exhibit A)
@@ -190,7 +190,7 @@ project/
 ├── guix.scm                   # Guix package
 ├── Justfile                   # Task runner
 ├── Containerfile              # Container build
-├── LICENSE                    # PMPL-1.0-or-later
+├── LICENSE                    # MPL-2.0
 ├── EXHIBIT-A-ETHICAL-USE.txt  # Ethical use guidelines
 ├── EXHIBIT-B-QUANTUM-SAFE.txt # Quantum-safe provenance
 ├── README.adoc                # Overview
@@ -214,7 +214,7 @@ project/
 * `.gitignore`
 * `Justfile`
 * `README.adoc`
-* `LICENSE` (PMPL-1.0-or-later)
+* `LICENSE` (MPL-2.0)
 * `.machine_readable/STATE.a2ml`
 * `.well-known/security.txt`
 * `.well-known/ai.txt`
@@ -281,7 +281,7 @@ This template is part of:
 
 == License
 
-SPDX-License-Identifier: MPL-2.0
+SPDX-License-Identifier: CC-BY-SA-4.0
 
 == Links
 

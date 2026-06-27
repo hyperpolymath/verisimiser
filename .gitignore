@@ -121,3 +121,8 @@ deps/
 .cache/
 build/
 dist/
+
+# Idris2 build artefacts
+**/build/
+*.ttc
+*.ttm

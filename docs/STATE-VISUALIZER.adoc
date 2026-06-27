@@ -1,7 +1,7 @@
 = Project State Visualizer
 [source]
 ----
-<!-- SPDX-License-Identifier: MPL-2.0 -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
 <!-- TOPOLOGY.md — Project architecture map and completion dashboard -->
 <!-- Last updated: 2026-02-28 -->
 
@@ -87,7 +87,7 @@ CONTAINER ECOSYSTEM (Phase 2)
 
 REPO INFRASTRUCTURE
   .machine_readable/                ██████████ 100%    STATE/META/ECOSYSTEM active
-  Governance & License              ██████████ 100%    PMPL & Ethical use verified
+  Governance & License              ██████████ 100%    MPL-2.0 & Ethical use verified
   Development Shells (Nix/Guix)     ██████████ 100%    Reproducible env stable
 
 ─────────────────────────────────────────────────────────────────────────────

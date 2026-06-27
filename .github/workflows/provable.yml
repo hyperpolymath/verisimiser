@@ -33,13 +33,14 @@ jobs:
         working-directory: src/interface/abi
         # Modules are namespaced Verisimiser.ABI.*, so they live under
         # Verisimiser/ABI/ (idris2 requires the file path to match the module
-        # name). Foreign imports Types + Layout, so checking it checks the lot;
-        # we check each explicitly for clearer failure attribution.
+        # name). We check each explicitly for clearer failure attribution.
         run: |
           idris2 --version
           idris2 --check Verisimiser/ABI/Types.idr
           idris2 --check Verisimiser/ABI/Layout.idr
           idris2 --check Verisimiser/ABI/Foreign.idr
+          idris2 --check Verisimiser/ABI/Proofs.idr
+          idris2 --check Verisimiser/ABI/Octad.idr
 
   zig-ffi:
     name: Zig — build + test FFI reference impl
