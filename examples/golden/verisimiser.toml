@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MPL-2.0
+# Frozen golden manifest for the codegen-drift check in provable.yml.
+#
+# examples/golden/generated/ is regenerated from this manifest + schema.sql in
+# CI and diffed against the committed tree. Do not edit casually: if you intend
+# to change the generator's output, regenerate the golden (see
+# examples/golden/README.adoc) and commit the code change and the refreshed
+# golden together in the same PR.
+
+[project]
+name = "golden"
+version = "0.1.0"
+description = "Frozen codegen golden sample (provable.yml codegen-drift)"
+
+[database]
+backend = "sqlite"
+connection-string-env = "GOLDEN_DATABASE_URL"
+schema-source = "schema.sql"
+
+[octad]
+enable-provenance = true
+enable-lineage = true
+enable-temporal = true
+enable-access-control = true
+enable-simulation = false
+
+[sidecar]
+storage = "sqlite"
+path = ".verisim/sidecar.db"

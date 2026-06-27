@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: MPL-2.0
+# Provable — machine-checks the claims VeriSimiser makes outside the Rust layer.
+#
+# The Rust CLI/codegen is covered by rust-ci.yml (fmt + clippy + test). This
+# workflow verifies the four things that are otherwise only asserted in prose:
+#   1. idris2-proofs  — the Idris2 ABI proofs actually type-check (`idris2 --check`).
+#   2. zig-ffi        — the Zig FFI reference impl builds and its tests pass.
+#   3. codegen-drift  — the committed golden sample matches fresh codegen output.
+#   4. sql-golden     — the generated overlay SQL actually applies to a real
+#                       SQLite database and every table/view builds and queries.
+#
+# Until every job here is green, the proofs / FFI / generated SQL are "written"
+# but NOT "verified" — ROADMAP.adoc and README.adoc are worded accordingly.
+name: Provable
+
+on:
+  push:
+    branches: [main, master, "claude/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  idris2-proofs:
+    name: Idris2 — machine-check ABI proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: ghcr.io/stefan-hoeck/idris2-pack:latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+      - name: idris2 build the ABI package (Types, Layout, Proofs, Foreign)
+        working-directory: src/interface/abi
+        # Modules are namespaced Verisimiser.ABI.* under Verisimiser/ABI/.
+        # Building the .ipkg type-checks every module in the package — including
+        # Proofs.idr, which carries the machine-checked C-ABI / layout theorems —
+        # in one invocation, which is also the canonical command in the .ipkg.
+        run: |
+          idris2 --version
+          idris2 --build verisimiser-abi.ipkg
+
+  zig-ffi:
+    name: Zig — build + test FFI reference impl
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+      - uses: mlugg/setup-zig@53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7 # v1.2.2
+        with:
+          version: 0.14.0
+      - name: zig build + test
+        working-directory: src/interface/ffi
+        # `zig build test` runs the 8 in-module unit tests AND the 35 C-ABI
+        # integration tests (which link the compiled libverisimiser.so).
+        run: |
+          zig version
+          zig build test
+          zig build
+
+  codegen-drift:
+    name: Codegen — golden sample is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+      - name: Regenerate golden artifacts and diff against committed tree
+        run: |
+          # retry: fresh runners occasionally flake fetching crates from crates.io
+          built=0
+          for i in 1 2 3; do
+            cargo build --quiet && { built=1; break; }
+            echo "build attempt $i failed; retrying after backoff…"; sleep $((i * 5))
+          done
+          [ "$built" = 1 ] || { echo "cargo build failed after retries"; exit 1; }
+          ( cd examples/golden && ../../target/debug/verisimiser generate -m verisimiser.toml -o /tmp/golden )
+          diff -ru examples/golden/generated /tmp/golden
+
+  sql-golden:
+    name: SQLite — generated overlay applies and views build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+      - name: Ensure sqlite3 is available
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+      - name: Apply schema + generated overlay + interceptors into a fresh SQLite DB
+        run: |
+          sqlite3 --version
+          DB="$(mktemp -d)/golden.db"
+          sqlite3 "$DB" < examples/golden/schema.sql
+          sqlite3 "$DB" < examples/golden/generated/sidecar_schema.sql
+          sqlite3 "$DB" < examples/golden/generated/interceptors.sql
+
+          # Every enabled octad dimension must have produced its sidecar table.
+          for t in verisimdb_metadata verisimdb_provenance_log \
+                   verisimdb_lineage_graph verisimdb_temporal_versions \
+                   verisimdb_access_policies; do
+            sqlite3 "$DB" "SELECT name FROM sqlite_master WHERE type='table' AND name='$t';" \
+              | grep -qx "$t" || { echo "missing sidecar table: $t"; exit 1; }
+          done
+
+          # Every target table must have provenance + temporal enrichment views,
+          # and each view must be queryable (catches invalid SQL in view bodies).
+          for v in verisimdb_users_with_provenance verisimdb_users_with_temporal \
+                   verisimdb_posts_with_provenance verisimdb_posts_with_temporal; do
+            sqlite3 "$DB" "SELECT name FROM sqlite_master WHERE type='view' AND name='$v';" \
+              | grep -qx "$v" || { echo "missing enrichment view: $v"; exit 1; }
+            sqlite3 "$DB" "SELECT count(*) FROM $v;" >/dev/null \
+              || { echo "view not queryable: $v"; exit 1; }
+          done
+
+          echo "Generated overlay applied cleanly; all sidecar tables + views present and queryable."
