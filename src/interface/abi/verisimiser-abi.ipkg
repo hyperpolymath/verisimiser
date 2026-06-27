@@ -10,3 +10,4 @@ modules = Verisimiser.ABI.Types
         , Verisimiser.ABI.Foreign
         , Verisimiser.ABI.Proofs
         , Verisimiser.ABI.Octad
+        , Verisimiser.ABI.Invariants
