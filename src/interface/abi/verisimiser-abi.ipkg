@@ -12,3 +12,4 @@ modules = Verisimiser.ABI.Types
         , Verisimiser.ABI.Octad
         , Verisimiser.ABI.Invariants
         , Verisimiser.ABI.FfiSeam
+        , Verisimiser.ABI.Capstone
