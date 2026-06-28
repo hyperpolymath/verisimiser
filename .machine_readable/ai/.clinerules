@@ -5,8 +5,8 @@
 # STARTUP: Read 0-AI-MANIFEST.a2ml first, then .machine_readable/STATE.a2ml.
 
 # LICENSE
-# All original code: PMPL-1.0-or-later.
-# Never AGPL-3.0. MPL-2.0 only as platform-required fallback.
+# Code + config: MPL-2.0. Documentation prose: CC-BY-SA-4.0.
+# Never AGPL-3.0.
 # SPDX header required on every source file.
 # Copyright: {{AUTHOR}} ({{OWNER}}) <{{AUTHOR_EMAIL}}>
 
