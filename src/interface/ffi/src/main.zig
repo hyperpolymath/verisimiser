@@ -246,10 +246,11 @@ export fn verisimiser_enable_dimension(
         return .invalid_param;
     };
 
-    // TODO: actually enable the dimension in the overlay index
-
-    clearError();
-    return .ok;
+    // The overlay index that persists per-entity dimension state is not yet
+    // wired into the FFI. Fail loudly rather than report a dimension as enabled
+    // when it is not (soundness: no silent success).
+    setError("octad dimension overlay not yet wired into the FFI");
+    return .sidecar_unavailable;
 }
 
 /// Get the active dimension bitmask for an entity.
@@ -296,10 +297,11 @@ export fn verisimiser_record_provenance(
         return .invalid_param;
     };
 
-    // TODO: compute SHA-256 hash, chain from previous, write to sidecar
-
-    clearError();
-    return .ok;
+    // The SHA-256 hash-chain sidecar append is not yet wired into the FFI.
+    // Fail loudly rather than report a provenance event as recorded when no
+    // entry was written (soundness: no phantom audit trail).
+    setError("provenance sidecar not yet wired into the FFI");
+    return .sidecar_unavailable;
 }
 
 /// Verify the integrity of an entity's provenance hash chain.
@@ -319,11 +321,12 @@ export fn verisimiser_verify_provenance(
 
     _ = entity_id;
 
-    // TODO: walk the hash chain, verify each link
-    // Return .chain_corrupted if any link fails verification
-
-    clearError();
-    return .ok;
+    // The hash-chain store is not yet wired into the FFI, so integrity cannot
+    // be confirmed. Return an error rather than .ok — reporting "verified" for
+    // an unchecked (possibly tampered) chain would be the worst kind of
+    // soundness hole.
+    setError("provenance sidecar not yet wired into the FFI; cannot verify integrity");
+    return .sidecar_unavailable;
 }
 
 /// Get the length of an entity's provenance chain.
@@ -364,10 +367,11 @@ export fn verisimiser_record_version(
     _ = snapshot_ptr;
     _ = snapshot_len;
 
-    // TODO: store snapshot in temporal sidecar with current timestamp
-
-    clearError();
-    return .ok;
+    // The temporal sidecar that stores version snapshots is not yet wired into
+    // the FFI. Fail loudly rather than report a version as recorded when no
+    // snapshot was stored (soundness: no phantom history).
+    setError("temporal sidecar not yet wired into the FFI");
+    return .sidecar_unavailable;
 }
 
 /// Query entity state at a specific point in time.
@@ -613,4 +617,47 @@ test "enable dimension with invalid dimension" {
 
     const result = verisimiser_enable_dimension(handle, 42, 99);
     try std.testing.expectEqual(Result.invalid_param, result);
+}
+
+// Soundness: the persistence-backed octad operations are not yet wired into
+// the FFI, so they must fail loudly rather than report a false success.
+
+test "verify provenance does not falsely report verified" {
+    const handle = verisimiser_init() orelse return error.InitFailed;
+    defer verisimiser_free(handle);
+
+    // A valid handle + entity must NOT return .ok while verification is unwired:
+    // claiming a chain is verified without checking it would be unsound.
+    const result = verisimiser_verify_provenance(handle, 42);
+    try std.testing.expect(result != Result.ok);
+    try std.testing.expectEqual(Result.sidecar_unavailable, result);
+}
+
+test "record provenance does not falsely report recorded" {
+    const handle = verisimiser_init() orelse return error.InitFailed;
+    defer verisimiser_free(handle);
+
+    const result = verisimiser_record_provenance(handle, 42, 0, 0);
+    try std.testing.expect(result != Result.ok);
+    try std.testing.expectEqual(Result.sidecar_unavailable, result);
+}
+
+test "record version does not falsely report stored" {
+    const handle = verisimiser_init() orelse return error.InitFailed;
+    defer verisimiser_free(handle);
+
+    const result = verisimiser_record_version(handle, 42, 0, 0);
+    try std.testing.expect(result != Result.ok);
+    try std.testing.expectEqual(Result.sidecar_unavailable, result);
+}
+
+test "enable dimension does not falsely report enabled" {
+    const handle = verisimiser_init() orelse return error.InitFailed;
+    defer verisimiser_free(handle);
+
+    // Dimension 2 (provenance) is a valid enum value; the call must still fail
+    // loudly because the overlay index is not wired in.
+    const result = verisimiser_enable_dimension(handle, 42, 2);
+    try std.testing.expect(result != Result.ok);
+    try std.testing.expectEqual(Result.sidecar_unavailable, result);
 }
