@@ -23,7 +23,7 @@
 * [ ] **Constraints** / drift detection — read-path observer; eight categories (ADR-0003)
 * [x] **Constraints** category 1 of 8: Temporal drift detector (V-L1-E2 / #49)
 * [ ] **Constraints** categories 2–8 of 8: Structural, Semantic, Statistical, Referential, Provenance, Spatial, Embedding
-* [ ] Idris2 ABI proofs: sidecar isolation, hash-chain integrity, version ordering, lineage acyclicity
+* [x] Idris2 ABI proofs: sidecar isolation (`Octad`), hash-chain integrity (`HashChain`), version ordering (`Version`), lineage acyclicity (`Lineage`) — machine-checked by `provable.yml` (the `*.idr` are abstract models of the invariants; live-DB enforcement of them is still TODO below)
 * [ ] Zig FFI bridge: database connection, sidecar operations, VCL-total queries
 * [ ] End-to-end test: PostgreSQL → verisimiser concerns → VCL-total query
 
