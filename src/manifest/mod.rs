@@ -372,6 +372,43 @@ mod validate_manifest_tests {
         assert!(report.failed_count() == 0);
     }
 
+    /// A manifest that sets both `[database].backend` and the legacy
+    /// `target-db` to conflicting values must fail validation up front, not
+    /// silently pass and blow up later at generate time (V-L2-E1).
+    #[test]
+    fn conflicting_backend_fails_validation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("verisimiser.toml");
+        let sidecar_path = dir.path().join("sidecar.db");
+        let body = format!(
+            "[project]\n\
+             name = \"test\"\n\
+             [database]\n\
+             backend = \"sqlite\"\n\
+             target-db = \"postgresql\"\n\
+             [sidecar]\n\
+             storage = \"sqlite\"\n\
+             path = \"{}\"\n",
+            sidecar_path.display().to_string().replace('\\', "/")
+        );
+        std::fs::write(&path, body).expect("write");
+
+        let report = validate_manifest(path.to_str().unwrap());
+        assert!(
+            !report.passed,
+            "conflicting backend/target-db must fail validation; checks: {:?}",
+            report.checks
+        );
+        assert!(
+            report
+                .checks
+                .iter()
+                .any(|c| c.name == "backend-unambiguous" && !c.passed),
+            "expected a failed 'backend-unambiguous' check; checks: {:?}",
+            report.checks
+        );
+    }
+
     /// A schema-source pointing at a missing file must fail
     /// `schema-source-exists`.
     #[test]
@@ -960,6 +997,26 @@ pub fn validate_manifest(path: &str) -> ValidationReport {
                 },
             },
         );
+
+        // 5. Backend selection is unambiguous. `effective_backend()` rejects a
+        // manifest that sets both [database].backend and the legacy
+        // [database].target-db to conflicting values (V-L2-E1). Validation must
+        // exercise it, otherwise a latent conflict passes `validate` only to
+        // fail later at generate time.
+        let backend_check = ValidationCheck {
+            name: "backend-unambiguous".to_string(),
+            description: "[database].backend and legacy target-db do not conflict".to_string(),
+            passed: true,
+            detail: None,
+        };
+        checks.push(match m.database.effective_backend() {
+            Ok(_) => backend_check,
+            Err(e) => ValidationCheck {
+                passed: false,
+                detail: Some(e.to_string()),
+                ..backend_check
+            },
+        });
     }
 
     let passed = checks.iter().all(|c| c.passed);
