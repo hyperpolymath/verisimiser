@@ -1,14 +1,19 @@
-<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
-<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
-# TOPOLOGY.md — verisimiser
+== TOPOLOGY.md — verisimiser
 
-## Purpose
+=== Purpose
 
-verisimiser augments any existing database with the full VeriSimDB octad of capabilities (the eight cross-modal dimensions). It reads the target database schema and a `verisimiser.toml` manifest, then generates a sidecar overlay, query interceptors, drift detection, provenance chains, and temporal version history — without requiring schema migrations. verisimiser is priority #3 in the -iser family and is the primary path for adding VeriSimDB capabilities to legacy PostgreSQL, SQLite, or MongoDB deployments.
+verisimiser augments any existing database with the full VeriSimDB octad
+of capabilities (the eight cross-modal dimensions). It reads the target
+database schema and a `+verisimiser.toml+` manifest, then generates a
+sidecar overlay, query interceptors, drift detection, provenance chains,
+and temporal version history — without requiring schema migrations.
+verisimiser is priority #3 in the -iser family and is the primary path
+for adding VeriSimDB capabilities to legacy PostgreSQL, SQLite, or
+MongoDB deployments.
 
-## Module Map
+=== Module Map
 
-```
+....
 verisimiser/
 ├── src/
 │   ├── main.rs                    # CLI entry point (clap): init, generate, start, drift, provenance, history, status, octad
@@ -23,11 +28,11 @@ verisimiser/
 ├── verification/                  # Proof harnesses
 ├── container/                     # Stapeln container ecosystem
 └── .machine_readable/             # A2ML metadata
-```
+....
 
-## Data Flow
+=== Data Flow
 
-```
+....
 verisimiser.toml manifest
         │
    ┌────▼────┐
@@ -47,4 +52,4 @@ verisimiser.toml manifest
    ┌────▼────┐
    │  Daemon  │  start augmentation daemon alongside target database
    └─────────┘
-```
+....
