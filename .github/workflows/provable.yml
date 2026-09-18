@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 20
     container: ghcr.io/stefan-hoeck/idris2-pack:latest
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: idris2 build the ABI package (Types, Layout, Proofs, Foreign)
         working-directory: src/interface/abi
         # Modules are namespaced Verisimiser.ABI.* under Verisimiser/ABI/.
@@ -44,8 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
-      - uses: mlugg/setup-zig@53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7 # v1.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.14.0
       - name: zig build + test
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Regenerate golden artifacts and diff against committed tree
         run: |
           # retry: fresh runners occasionally flake fetching crates from crates.io
@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Ensure sqlite3 is available
         run: sudo apt-get update && sudo apt-get install -y sqlite3
       - name: Apply schema + generated overlay + interceptors into a fresh SQLite DB
