@@ -12,10 +12,13 @@ This is the AI manifest for **verisimiser**. It declares:
 - Critical invariants (rules that must NEVER be violated)
 - Repository structure and organization
 
-**verisimiser** augments existing databases with VeriSimDB octad capabilities.
-It wraps PostgreSQL, SQLite, MongoDB, Redis, and other backends to add eight
-octad dimensions (data, metadata, provenance, lineage, constraints, access
-control, temporal, simulation) without requiring database migration.
+**verisimiser** augments existing databases with its fixed eight-concern
+Octad (ADR-0004/ADR-0014), drawing capability from VeriSimDB's upstream
+eight-modality Octad model. It wraps PostgreSQL, SQLite, MongoDB, Redis, and
+other backends to add those eight concerns (data, metadata, provenance,
+lineage, constraints, access control, temporal, simulation) without requiring
+database migration. "Octad" unqualified means the concern Octad; upstream's
+is written *VeriSimDB's Octad*.
 
 ## CANONICAL LOCATIONS (UNIVERSAL RULE)
 
@@ -93,9 +96,9 @@ Policy enforcement contracts (k9, dust, lust, must, trust).
 
 ## VERISIMISER-SPECIFIC INVARIANTS
 
-- **Octad dimensions**: data, metadata, provenance, lineage, constraints, access-control, temporal, simulation
+- **Concern Octad** (ADR-0004): data, metadata, provenance, lineage, constraints, access-control, temporal, simulation -- fixed arity, not the upstream modality Octad
 - **Tier 1 (piggybacks)**: drift detection, provenance tracking, temporal versioning -- sidecar-only
-- **Tier 2 (overlays)**: graph, vector, tensor, semantic, document, spatial -- additional storage
+- **Tier 2 (overlays)**: graph, vector, tensor, semantic, document, spatial -- six-member overlay modality set (not an octad); per-manifest enabled-overlay selection (ADR-0014)
 - **Supported backends**: PostgreSQL, SQLite, MongoDB, Redis (extensible)
 - **VQL-UT**: Type-safe query interface for octad queries
 

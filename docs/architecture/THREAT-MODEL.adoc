@@ -6,9 +6,11 @@
 
 == Overview
 
-VeriSimiser augments existing databases with VeriSimDB octad capabilities.
-It sits between applications and their databases, intercepting reads and writes
-to maintain provenance chains, temporal versions, drift indices, and overlay
+VeriSimiser augments existing databases with its fixed eight-concern Octad
+(ADR-0004/ADR-0014), drawing capability from VeriSimDB's upstream
+eight-modality Octad. It sits between applications and their databases,
+intercepting reads and writes to maintain provenance chains, temporal
+versions, and drift indices, and — once implemented — Tier 2 overlay
 modalities.
 
 == Trust Boundaries
@@ -55,7 +57,8 @@ Type-safe queries cross both Tier 1 and Tier 2 boundaries.
 
 * **Threat**: False negatives in drift detection (inconsistencies not flagged).
 * **Mitigation**: 8-category drift classification ensures comprehensive coverage.
-  Idris2 ABI proofs verify that all modalities are checked.
+  Idris2 ABI proofs cover the detector's invariants; the taxonomy is
+  exhaustive over the eight categories.
 
 == Data at Rest
 

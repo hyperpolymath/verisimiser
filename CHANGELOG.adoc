@@ -70,6 +70,15 @@ fields (#88)
 
 ==== Documentation
 
+* docs(adr): 0014-modality-vocabulary — unqualified *Octad* is
+VeriSimiser's concern Octad; upstream is always *VeriSimDB's Octad*;
+Tier 2 is a six-member overlay modality set with per-manifest enabled
+overlays, not a "modality profile" (closes #213)
+* docs(readme): vocabulary table for the three octad/modality models;
+manifest section corrected to the canonical `[project]`/`[database]`/
+`[octad]`/`[sidecar]`/`[retention]` schema, with the legacy
+`[verisimiser]`/`[tier1]`/`[tier2]` shape documented as parsed-but-inert;
+Tier 2 subset and stub status called out (#213)
 * docs(readme): rewrite around concerns octad (V-L1-A2) (#99)
 * docs(adr): 0009-build-path — cargo + Containerfile canonical; rest
 experimental (#97)

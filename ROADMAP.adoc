@@ -7,12 +7,13 @@
 == Phase 0: Scaffold (COMPLETE)
 * [x] RSR template with full CI/CD
 * [x] CLI with subcommands (init, start, drift, provenance, history, status, octad, doctor, gc, validate, version)
-* [x] Manifest parser (verisimiser.toml with `[tier1]`/`[tier2]`/`[retention]` config)
+* [x] Manifest parser (verisimiser.toml: `[project]`/`[database]`/`[octad]`/`[sidecar]`/`[retention]`, plus legacy `[verisimiser]`/`[tier1]`/`[tier2]`)
 * [x] Concerns octad fixed canonical (ADR-0004): Data, Metadata, Provenance, Lineage, Constraints, AccessControl, Temporal, Simulation
 * [x] Tier 1 data types per concern (ProvenanceEntry, TemporalVersion, DriftReport, AccessPredicate)
 * [x] ABI module stubs (Idris2 + Zig FFI) and domain-tagged `compute_hash`
 * [x] Drift categories pinned (ADR-0003): input / distance / threshold per category
 * [x] README rewritten around concerns octad (V-L1-A2, #20)
+* [x] Vocabulary fixed (ADR-0014, #213): unqualified *Octad* = the concern Octad; *VeriSimDB's Octad* = upstream eight-modality API/model; Tier 2 = six-member overlay modality set with per-manifest enabled overlays (no "modality profile")
 
 == Phase 1: PostgreSQL Tier 1 MVP — concerns layered onto your DB
 * [ ] PostgreSQL logical replication interception (Data / Metadata feed)

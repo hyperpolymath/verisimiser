@@ -2,8 +2,9 @@
 
 === Purpose
 
-verisimiser augments any existing database with the full VeriSimDB octad
-of capabilities (the eight cross-modal dimensions). It reads the target
+verisimiser augments any existing database with VeriSimiser's fixed
+eight-concern Octad (ADR-0004/ADR-0014), drawing on capabilities from
+VeriSimDB's eight-modality Octad upstream. It reads the target
 database schema and a `+verisimiser.toml+` manifest, then generates a
 sidecar overlay, query interceptors, drift detection, provenance chains,
 and temporal version history — without requiring schema migrations.
@@ -21,8 +22,8 @@ verisimiser/
 │   ├── manifest/mod.rs            # verisimiser.toml parser
 │   ├── codegen/mod.rs             # Sidecar overlay and query interceptor generation
 │   ├── intercept/                 # Query interception layer
-│   ├── tier1/                     # Tier-1 octad dimension modules
-│   ├── tier2/                     # Tier-2 octad dimension modules
+│   ├── tier1/                     # Tier-1 concern modules (concern Octad)
+│   ├── tier2/                     # Tier-2 overlay modality stubs (six, not an octad)
 │   └── abi/                       # Idris2 ABI bridge stubs
 ├── examples/                      # Worked examples
 ├── verification/                  # Proof harnesses
@@ -36,7 +37,7 @@ verisimiser/
 verisimiser.toml manifest
         │
    ┌────▼────┐
-   │ Manifest │  parse + validate database backend and octad dimension selections
+   │ Manifest │  parse + validate database backend, [octad] concerns, [tier2] overlay selection
    │  Parser  │
    └────┬────┘
         │  validated augmentation config
@@ -48,7 +49,7 @@ verisimiser.toml manifest
    │ Codegen  │  emit generated/verisimiser/ (sidecar overlay, query interceptors,
    │          │  provenance chains, temporal history, drift detectors)
    └────┬────┘
-        │  VeriSimDB octad augmentation artifacts
+        │  concern-Octad augmentation artifacts (sidecar schema + interceptors)
    ┌────▼────┐
    │  Daemon  │  start augmentation daemon alongside target database
    └─────────┘

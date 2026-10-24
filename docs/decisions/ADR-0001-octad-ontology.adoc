@@ -14,6 +14,12 @@ Closes as wontfix: https://github.com/hyperpolymath/verisimiser/issues/21[V-L1-A
 
 Unblocks: https://github.com/hyperpolymath/verisimiser/issues/20[V-L1-A2] (the README rewrite).
 
+Vocabulary note (2026-10-24): `0014-modality-vocabulary.adoc` (ADR-0014)
+fixes the terms around this decision — unqualified *Octad* means the
+concern octad, the upstream model is written *VeriSimDB's Octad*, and the
+Tier 2 overlays are a six-member *overlay modality set* with per-manifest
+*enabled overlays* rather than a "modality profile".
+
 == Context
 
 Two competing ontologies have lived in this repository under the same name

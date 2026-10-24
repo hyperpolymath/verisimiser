@@ -94,8 +94,11 @@ and Zig implementations.
 
 === Dependencies
 
-* *VeriSimDB* (nextgen-databases): Source of the octad model.
-VeriSimiser is a gateway to full VeriSimDB adoption.
+* *VeriSimDB* (nextgen-databases): Source of the upstream
+eight-modality Octad model. VeriSimiser's own Octad is the eight
+*concerns* (ADR-0004), and its six Tier 2 overlay modalities are a
+subset of upstream's modalities (ADR-0014). VeriSimiser is a gateway to
+full VeriSimDB adoption.
 * *TypedQLiser*: Compile-time query type checking. Works alongside
 VeriSimiser for formally verified queries.
 * *SqueakWell*: Database recovery via cross-modal constraint
