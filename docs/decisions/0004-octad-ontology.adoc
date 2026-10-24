@@ -121,6 +121,27 @@ argument loses to the implementation reality above.
 
 * ADR-0001 — adopts RSR template (predates this decision).
 * ADR-0003 — drift categories (built on the concerns octad).
+* ADR-0014 — vocabulary around this decision (concern Octad vs
+  VeriSimDB's Octad vs the six-member Tier 2 overlay modality set).
 * V-L1-B1 — provenance threat model (cites concerns octad).
 * `src/abi/mod.rs::OctadDimension` — canonical enum.
 * `src/manifest/mod.rs::OctadConfig` — manifest mapping.
+
+## Amendment: vocabulary (2026-10-24)
+
+ADR-0014 (`0014-modality-vocabulary.adoc`) settles the vocabulary this
+decision left implicit, without changing it:
+
+* Unqualified **Octad** in VeriSimiser means *this* (concern) octad.
+* The upstream model is always written **VeriSimDB's Octad** — its
+  named eight-modality API/model, which VeriSimiser consumes but does
+  not own.
+* The Tier 2 overlays named above are a **six-member overlay modality
+  set** (graph, vector, tensor, semantic, document, spatial); upstream's
+  Temporal and Provenance modalities are Tier 1 concerns here, not
+  overlays.
+* A manifest's choice among those six is an **enabled-overlay
+  selection**, not a versioned "modality profile"; that term is
+  reserved for upstream verisimdb#299 and would need a schema change to
+  apply here.
+* No schema, CLI, or manifest field is renamed by this amendment.

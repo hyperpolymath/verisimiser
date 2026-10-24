@@ -137,7 +137,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Show the octad modalities and which tiers they belong to.
+    /// Show the eight concerns of the Octad and which tiers they belong to.
     Octad,
     /// Print version, git-sha, and build-date.
     Version {
@@ -692,9 +692,12 @@ fn short_hash(hash: &str) -> String {
     }
 }
 
-/// Print the 8 octad dimensions with descriptions.
+/// Print the eight concerns of VeriSimiser's Octad with descriptions.
+///
+/// Deliberately not labelled "VeriSimDB Octad": that is the upstream
+/// eight-modality model, a different vocabulary (ADR-0014).
 fn print_octad() {
-    println!("=== VeriSimDB Octad: Eight Dimensions ===");
+    println!("=== VeriSimiser Octad: Eight Concerns ===");
     println!();
     for dim in abi::OctadDimension::all() {
         let inherent = if dim.is_inherent() {

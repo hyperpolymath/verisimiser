@@ -1,0 +1,210 @@
+= Architecture Decision Record: 0014-modality-vocabulary
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
+
+# 14. Modality vocabulary: concern Octad, upstream Octad, enabled overlays
+
+Date: 2026-10-24
+
+## Status
+
+Accepted — extends ADR-0004 (`0004-octad-ontology.adoc`); does not
+supersede it.
+
+Addresses: https://github.com/hyperpolymath/verisimiser/issues/213
+(follow-on to V-L1-A2 / #20, the README rewrite).
+
+Related upstream terminology proposal:
+https://github.com/hyperpolymath/verisimdb/issues/299.
+
+## Context
+
+ADR-0004 settled *which* eight-element model is canonical in
+VeriSimiser. It did not settle the vocabulary used around that model,
+and three distinct things are still called "octad" or "modalities" in
+the tree:
+
+. **VeriSimiser's concern Octad** — Data · Metadata · Provenance ·
+  Lineage · Constraints · AccessControl · Temporal · Simulation.
+  Canonical since ADR-0004. Materialised as
+  `src/abi/mod.rs::OctadDimension` (an enum with exactly eight
+  variants, enforced as a rule in
+  `.machine_readable/6a2/NEUROSYM.a2ml`), `src/manifest/mod.rs::OctadConfig`,
+  the `[octad]` manifest section, and `verisimiser octad`.
+
+. **VeriSimDB's (upstream) Octad** — Graph · Vector · Tensor ·
+  Semantic · Document · Temporal · Provenance · Spatial. This is the
+  upstream project's *named eight-modality API and model*. VeriSimiser
+  consumes it as a source of capability; it does not own it, does not
+  re-export it, and has no `OctadDimension` variant for six of its
+  eight members.
+
+. **Tier 2 overlay modalities** — Graph · Vector · Tensor · Semantic ·
+  Document · Spatial. Six members, not eight: upstream's Temporal and
+  Provenance members are Tier 1 *concerns* in VeriSimiser. Each is an
+  alternative storage shape an entity can additionally be projected
+  into (`src/manifest/mod.rs::Tier2Config`, currently a stub in
+  `src/tier2/mod.rs`).
+
+Issue #213 observed that this distinction is still easy to conflate,
+and proposed **modality profile** as the number-agnostic term for a
+selectable set of Tier 2 overlay modalities. The term must be adopted
+only if it describes what the code actually does.
+
+## Decision
+
+### 14.1 "Octad" alone means the concern Octad
+
+In VeriSimiser documentation, unqualified **Octad** means the fixed
+eight-**concern** model of ADR-0004: eight questions asked of an
+entity, independent of storage. Its members are *concerns*, never
+*modalities*. The arity is fixed at eight — `OctadDimension::all()`
+returns `[OctadDimension; 8]`, and the enum may not grow a ninth
+variant.
+
+### 14.2 Upstream is always qualified: "VeriSimDB's Octad"
+
+The upstream eight-**modality** API/model is written as **VeriSimDB's
+Octad** (or "the upstream Octad"). It is a different ontology that
+happens to also have eight members — the shared word is arity, not
+meaning. Docs must not present it as VeriSimiser's type, and must not
+imply that VeriSimiser implements all eight of its modalities natively.
+
+### 14.3 Tier 2 is a six-member overlay modality set, not an octad
+
+The Tier 2 **overlay modality set** is Graph, Vector, Tensor, Semantic,
+Document, Spatial. Membership is fixed by `Tier2Config`'s six boolean
+fields; adding a seventh is an ontology change (and would need its own
+ADR, storage decision, and drift-category mapping), not a config edit.
+
+Upstream's Temporal and Provenance modalities appear in VeriSimiser as
+Tier 1 concerns, not overlays. That asymmetry is deliberate: Tier 1
+records what happened to the real data; Tier 2 stores an additional
+projection of it.
+
+### 14.4 Per-manifest selection is "enabled overlays"
+
+What a manifest chooses is an **enabled-overlay selection**: any subset
+of the six-member set, cardinality 0–6, currently all defaulting to
+`false`. The cardinality is *derived* (count of `true` flags); it is
+never declared, stored, or validated anywhere.
+
+### 14.5 "Modality profile" is not adopted (yet)
+
+Upstream verisimdb#299 proposes **modality profile** for "the
+versioned, implementation-specific selection of supported modalities",
+with membership and cardinality explicit and not encoded in the generic
+term. Measured against `Tier2Config` as it exists:
+
+[cols="2,2,1",options="header"]
+|===
+| Criterion (from verisimdb#299) | VeriSimiser Tier 2 today | Match
+
+| Membership is explicit
+| Six booleans in `Tier2Config`, fixed at compile time
+| yes
+
+| Cardinality is explicit
+| Derived from the flags; no declared count, no validation, no field
+| no
+
+| Profile is versioned
+| No version field; `Manifest` has no schema version either
+| no
+
+| Profile describes what the *implementation supports*
+| Supported set is a fixed six; the per-manifest flags express *user
+  enablement*, a different quantity
+| no
+
+| Survives as a nameable artifact (schema/CLI surface)
+| None; the flags exist, a "profile" does not
+| no
+|===
+
+The term therefore describes neither of the two things it could be
+attached to: not the fixed support set (which is not a profile because
+it never varies or versions), and not the `[tier2]` flags (which are a
+selection, not a declaration of support). Using it in prose while the
+code has no such concept would recreate exactly the ambiguity ADR-0004
+removed. **VeriSimiser docs use "overlay modality set" for membership
+and "enabled overlays" for the selection**, and reserve "modality
+profile" for upstream VeriSimDB once #299 lands.
+
+If a versioned profile is ever wanted here — e.g. a
+`[modality-profile]` table with `name`, `version`, and an explicit
+member list — that is a manifest-schema change and needs its own
+compatibility ADR (parser migration, `validate` coverage, `status`
+output) before any doc adopts the word.
+
+### 14.6 No renames
+
+This ADR is documentation-only. The following surfaces are unchanged
+and any rename is a separate compatibility decision:
+
+* Manifest keys: `[octad]`, `enable-provenance`, `enable-lineage`,
+  `enable-temporal`, `enable-access-control`, `enable-constraints`,
+  `enable-simulation`, `[sidecar]`, `[retention]`, and the legacy
+  `[verisimiser]`, `[tier1]`, `[tier2]` sections with their keys.
+* Types: `OctadConfig`, `OctadStatus`, `OctadDimension`, `Tier2Config`.
+* CLI: the `verisimiser octad` subcommand name and its options.
+* Codegen output: `verisimdb_*` sidecar table names.
+
+## Consequences
+
+### Positive
+
+* A reader can tell which of the three eight-or-six-element models a
+  sentence means without reading further context.
+* The docs stop implying that VeriSimiser implements VeriSimDB's full
+  modality Octad; Tier 2's six-member subset and its two Tier 1
+  exemptions are stated once and cross-referenced.
+* The `README`'s manifest example can be corrected against the parser
+  (see Follow-ups) without touching the schema.
+* No code, schema, or CLI churn: comment and prose edits only.
+
+### Negative
+
+* "Overlay modality set" is longer than "modality profile" and reads
+  less well in prose; that is the cost of not naming a concept the code
+  does not have.
+* Readers must consult ADR-0004 and this ADR together to get the full
+  picture.
+
+### Neutral
+
+* The legacy `[tier1]`/`[tier2]` sections stay. They are parsed for
+  backward compatibility but do not drive behaviour; `[octad]` is the
+  effective configuration. Docs now say so explicitly.
+* VeriSimDB's Octad keeps changing upstream; classifying it as an
+  external model means VeriSimiser docs never have to track its edits.
+
+## Follow-ups
+
+* **Done in this change**: README gains a vocabulary table; the Tier 2
+  section states the six-member set and the selected-subset semantics;
+  the manifest section shows the canonical `[project]`/`[database]`/
+  `[octad]`/`[sidecar]`/`[retention]` schema with the legacy shape
+  documented separately; `docs/architecture/TOPOLOGY.adoc`,
+  `CONTRIBUTING-DEV.adoc`, `src/abi/mod.rs`, and `src/tier2/mod.rs`
+  use the vocabulary defined here.
+* **Still open**: Tier 2 overlays have no implementation. `[tier2]`
+  flags are parsed and inert; README says so until overlay codegen and
+  query routing land (V-L1-F/G/H).
+* **Still open**: revisit "modality profile" if verisimdb#299 fixes a
+  versioned profile shape and VeriSimiser adopts a matching schema
+  (separate ADR, per 14.5).
+
+## Cross-references
+
+* ADR-0004 (`0004-octad-ontology.adoc`) — concern Octad is canonical;
+  this ADR fixes the vocabulary around that decision.
+* ADR-0003 (`0003-drift-categories.adoc`) — the eight drift categories
+  are Constraints symptoms observed across representations; they are
+  not the Octad's members.
+* `src/abi/mod.rs::OctadDimension` — eight concern variants, no more.
+* `src/manifest/mod.rs::OctadConfig` — concern toggles, fixed arity.
+* `src/manifest/mod.rs::Tier2Config` — the six overlay modalities.
+* `src/tier2/mod.rs` — Tier 2 module stubs.
+* https://github.com/hyperpolymath/verisimdb/issues/299 — upstream
+  modality-profile terminology.

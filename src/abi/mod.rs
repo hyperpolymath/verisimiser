@@ -18,14 +18,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
-// OctadDimension — the 8 modalities of VeriSimDB
+// OctadDimension — the 8 concerns of VeriSimiser's Octad (ADR-0004/ADR-0014)
 // ---------------------------------------------------------------------------
 
-/// The eight dimensions of the VeriSimDB octad model.
+/// The eight concerns of VeriSimiser's Octad — fixed arity, never "modalities".
 ///
-/// Every piece of data in a VeriSimDB-augmented database exists simultaneously
-/// across up to 8 dimensions. The first two (Data, Metadata) are inherent in
-/// the target database; the remaining six are added by the verisimiser sidecar.
+/// Every entity in a VeriSimiser-augmented database is enriched along exactly
+/// eight concerns. The first two (Data, Metadata) are inherent in the target
+/// database; the remaining six are added by the verisimiser sidecar.
+///
+/// This enum is *not* VeriSimDB's Octad (the upstream eight-modality model):
+/// it deliberately has no Graph/Vector/Tensor/Semantic/Document/Spatial
+/// variants. Those are Tier 2 overlay modalities, selected per manifest via
+/// `Tier2Config` — see ADR-0014.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OctadDimension {
     /// The original data as stored in the target database.

@@ -33,9 +33,11 @@ Each entity in a VeriSimiser-augmented database is enriched along
 **eight concerns** — properties you want to know or enforce about the
 data, independent of how it is stored. The concerns octad is canonical
 per `docs/decisions/0004-octad-ontology.adoc` (ADR-0004). The earlier
-"Eight Modalities" framing (graph, vector, tensor, …) is reframed as a
-set of **Tier 2 overlay representations**, not the top-level identity;
-see <<tier-2-augmentation-layer,Tier 2>> below.
+"Eight Modalities" framing (graph, vector, tensor, …) is reframed as the
+six-member **Tier 2 overlay modality set**, not the top-level identity;
+see <<tier-2-augmentation-layer,Tier 2>> below and
+<<octad-vocabulary,the vocabulary note>> for how that differs from
+VeriSimDB's Octad.
 
 [cols="1,2,1,1,1"]
 |===
@@ -94,6 +96,46 @@ see <<tier-2-augmentation-layer,Tier 2>> below.
 The canonical Rust enumeration of these is `abi::OctadDimension`. The
 CLI's `verisimiser octad` subcommand prints this set with descriptions.
 
+[[octad-vocabulary]]
+=== Three things called "octad"
+
+"Octad" names two different eight-element models in two different
+projects, and VeriSimiser's Tier 2 overlays are a third, non-octad
+thing. Per `docs/decisions/0014-modality-vocabulary.adoc` (ADR-0014):
+
+[cols="1,3,3",options="header"]
+|===
+| Term | What it denotes | What it does *not* denote
+
+| **Octad** (unqualified, in this repo)
+| VeriSimiser's fixed eight-**concern** model — the table above.
+| Never the upstream modality list; never the Tier 2 overlays.
+
+| **`OctadDimension`**
+| The Rust enum with exactly eight concern variants (Data … Simulation).
+| It has no `Graph`, `Vector`, `Tensor`, `Semantic`, `Document`, or `Spatial` variant.
+
+| **VeriSimDB's Octad** (upstream)
+| VeriSimDB's named eight-**modality** API and model — graph, vector, tensor, semantic, document, temporal, provenance, spatial.
+| Not a VeriSimiser type, field, or enum; VeriSimiser does not implement all eight of its modalities natively.
+
+| **Tier 2 overlay modality set**
+| The six overlay modalities an entity can additionally be projected into: graph, vector, tensor, semantic, document, spatial.
+| Not "the Octad" — it has six members, not eight. Upstream's Temporal and Provenance members are Tier 1 *concerns* here.
+
+| **Enabled overlays**
+| Per-manifest selection from that six-member set (any subset, 0–6 members; all six default to `false`).
+| Not a versioned "modality profile" — see below.
+|===
+
+VeriSimiser docs do not call an enabled-overlay selection a
+**modality profile**: upstream
+https://github.com/hyperpolymath/verisimdb/issues/299[verisimdb#299]
+proposes that term for a *versioned, implementation-specific* selection
+of supported modalities, and `[tier2]` flags are unversioned enablement
+booleans with derived, undeclared cardinality. Adopting the term here
+would need a manifest-schema change first (ADR-0014 §14.5).
+
 == Tier 1: True Piggybacks
 
 These work like PostGIS — they add capability without replacing
@@ -150,13 +192,13 @@ Prefix-typed principals (`user:`, `group:`, `role:`) and an
 against the same row that flows through the read-path. See ADR-0007 for
 the model.
 
-=== Drift detection: symptoms of Constraints violation across modalities
+=== Drift detection: symptoms of Constraints violation across representations
 
 Drift detection is **what the Constraints concern observes** when the
 same entity is represented in more than one form and the forms disagree.
-Once a Tier 2 overlay (graph, vector, tensor, …) is enabled alongside
-the primary Data, the representations can fall out of sync — at which
-point the Constraints concern reports the symptom.
+Once a Tier 2 overlay modality (graph, vector, tensor, …) is enabled
+alongside the primary Data, the representations can fall out of sync —
+at which point the Constraints concern reports the symptom.
 
 ADR-0003 fixes each drift category as a triple of (input, distance
 function, default threshold). All categories produce a score in `[0, 1]`
@@ -167,7 +209,7 @@ categories:
 |===
 | Category | What it compares | Default threshold
 
-| **Temporal**     | `MAX(version)` per modality for the same entity | `0.10`
+| **Temporal**     | `MAX(version)` per representation for the same entity | `0.10`
 | **Structural**   | Schema fingerprint (sorted `(field, type)` pairs) | `0.05`
 | **Semantic**     | Free-text labels via sentence embeddings (cosine) | `0.20`
 | **Statistical**  | Distributions over the same field (1-Wasserstein) | `0.15`
@@ -191,12 +233,15 @@ doesn't modify them. Safe to add, safe to remove, no data dependency.
 
 Tier 2 capabilities require additional storage alongside your database.
 They are honest about being "VeriSimDB modalities with your database as
-the primary store." This is still valuable — it's how you get octad
-capabilities incrementally — but it's not a bolt-on.
+the primary store" — but only a six-member subset of VeriSimDB's Octad
+(graph, vector, tensor, semantic, document, spatial). Upstream's Octad
+also lists Temporal and Provenance; here those are Tier 1 *concerns*
+(see above), not overlays. So Tier 2 is not "the Octad": it is the
+**Tier 2 overlay modality set**.
 
-Tier 2 modalities are **overlay representations** — alternative shapes
-the same entity is projected into for a specific query workload. A user
-enables `vector` because they want similarity search; they enable
+Tier 2 overlay modalities are **overlay representations** — alternative
+shapes the same entity is projected into for a specific query workload.
+A user enables `vector` because they want similarity search; they enable
 `spatial` because they want geofencing. Enabling an overlay is
 independent of which concerns are active.
 
@@ -212,13 +257,68 @@ independent of which concerns are active.
 * **Spatial overlay** — geospatial coordinates. Stored in an R-tree
   sidecar.
 
-Each Tier 2 overlay has its own storage and can be enabled
-independently via `[tier2]` in the manifest. Your primary database
-remains the source of truth for its native data. When an overlay
-diverges from the primary Data, the Constraints concern reports the
-symptom via the relevant drift category (see above).
+The six-member set is fixed by `Tier2Config` in `src/manifest/mod.rs`;
+what a manifest chooses is an **enabled-overlay selection** — any
+subset of the six, cardinality 0–6, all defaulting to `false`. Your
+primary database remains the source of truth for its native data. When
+an overlay diverges from the primary Data, the Constraints concern
+reports the symptom via the relevant drift category (see above).
+
+**Status**: the Tier 2 modules are stubs today (`src/tier2/mod.rs`).
+The `[tier2]` flags are parsed but not yet acted on — no overlay index,
+overlay DDL, or query routing ships yet, so enabling an overlay is a
+declaration of intent rather than an active capability. Overlay codegen
+is tracked as V-L1-F/G/H.
+
+The selection is not a versioned "modality profile" in the sense of
+verisimdb#299; see <<octad-vocabulary,the vocabulary note>> and
+ADR-0014 before introducing that term anywhere.
 
 == The Manifest
+
+The canonical (Phase 1) shape is `[project]`, `[database]`, `[octad]`,
+`[sidecar]`, `[retention]`. `[octad]` configures the concern Octad
+above; only its six togglable concerns appear, because Data and
+Metadata are always on:
+
+[source,toml]
+----
+[project]
+name = "my-augmented-db"
+version = "0.1.0"
+
+[database]
+backend = "postgresql"            # postgresql | sqlite | mongodb
+connection-string-env = "DATABASE_URL"
+# schema-source = "schema.sql"
+
+# The concern Octad (ADR-0004) — six togglable concerns, not modalities
+[octad]
+enable-provenance = true          # SHA-256 hash-chain audit trail
+enable-lineage = true             # acyclic derivation DAG (ADR-0005)
+enable-constraints = true         # invariant enforcement / drift reports
+enable-access-control = true      # row/column policies (ADR-0007)
+enable-temporal = true            # automatic version history
+enable-simulation = false         # what-if branches (ADR-0006)
+
+[sidecar]
+storage = "sqlite"                # sqlite | postgres | json (ADR-0012)
+path = ".verisim/sidecar.db"
+
+[retention]
+temporal-days = 90                # purged by `verisimiser gc`
+# provenance-days = 0             # 0 = keep forever
+# lineage-days    = 0
+----
+
+`[retention]` keys are `provenance-days`, `temporal-days`, and
+`lineage-days` (`0` = keep forever). Sidecar backend and json encoding
+are covered in <<sidecar-storage,sidecar storage backends>>.
+
+=== Legacy manifest sections
+
+Pre-Phase-1 manifests used `[verisimiser]`, `[tier1]`, and `[tier2]`.
+They still parse, so existing files keep working:
 
 [source,toml]
 ----
@@ -226,29 +326,14 @@ symptom via the relevant drift category (see above).
 name = "my-augmented-db"
 
 [database]
-target-db = "postgresql"
+target-db = "postgresql"          # legacy alias of `backend`
 connection-string = "postgres://localhost/mydb"
 
-# Tier 1: concerns layered onto your DB without altering its storage
 [tier1]
-provenance = true             # SHA-256 hash-chain audit trail
-lineage = true                # acyclic derivation DAG (ADR-0005)
-constraints = true            # invariant enforcement / drift reports
-access-control = true         # row/column policies (ADR-0007)
-temporal-versioning = true    # automatic version history
-drift-detection = true        # cross-modal observer (Constraints symptom)
+provenance = true
+temporal-versioning = true
+drift-detection = true
 
-[tier1.provenance]
-sidecar = "sqlite"            # sqlite | postgres | json (V-L2-F3 / ADR-0012)
-sidecar-path = ".verisimiser/provenance.db"
-
-[tier1.temporal]
-sidecar = "sqlite"
-
-[retention]
-temporal-days = 90            # purged by `verisimiser gc`
-
-# Tier 2: overlay representations (additional storage alongside your DB)
 [tier2]
 graph = false
 vector = false
@@ -256,16 +341,40 @@ tensor = false
 semantic = false
 document = false
 spatial = false
-
-[tier2.vector]
-# model = "sentence-transformers/all-MiniLM-L6-v2"
-# dimensions = 384
 ----
+
+Read this carefully before copying it:
+
+* **`[tier1]` accepts exactly three keys** — `provenance`,
+  `temporal-versioning`, `drift-detection`. Lineage, Constraints, and
+  AccessControl toggles exist only in `[octad]`. Unknown keys inside a
+  section are ignored on parse, so a legacy manifest that set
+  `lineage = true` under `[tier1]` enabled nothing.
+* **Nested tables under `[tier1]`/`[tier2]` are a parse error** —
+  their keys are booleans, so `[tier1.provenance]` or
+  `[tier2.vector]` fails with a type error. Overlay options such as
+  embedding model or dimensions are not expressible yet.
+* **The legacy sections do not drive behaviour**: the runtime reads
+  `[octad]`/`[sidecar]`/`[retention]` only. Set those, even if a legacy
+  section is also present.
+* **`backend` and `target-db` disagreeing is an error**, not a silent
+  tie-break (V-L2-E1). `connection-string` is likewise a legacy
+  alternative to `connection-string-env`; the env-var form is preferred
+  so secrets stay out of the file.
+* **`[tier2]` is the enabled-overlay selection** over the six-member
+  Tier 2 overlay modality set, not a modality profile and not part of
+  the Octad (ADR-0014). The flags are currently inert; see
+  <<tier-2-augmentation-layer,Tier 2>>.
+
+Field names are stable: this section documents them, and does not
+rename any of them. A rename would be a compatibility decision of its
+own (ADR-0014 §14.6).
 
 The `verisimiser octad` subcommand prints the active concerns from your
 manifest; `verisimiser doctor` checks that sidecars, thresholds, and
 retention bounds are configured consistently.
 
+[[sidecar-storage]]
 === Sidecar storage backends (Phase 1 schema)
 
 The Phase 1 manifest uses a single `[sidecar]` section. All octad data
@@ -342,7 +451,7 @@ are not yet implemented and refuse explicitly rather than silently no-op.
               └───────────────────────────────────┼──────────────────────┘
                                                   │
               ┌───── optional, per-overlay ───────┘
-              │ Tier 2 overlays (modalities)
+              │ Tier 2 overlay modalities (six-member set)
               │
               │  ┌───────┐ ┌────────┐ ┌────────┐ ┌──────────┐ ┌────────┐ ┌────────┐
               │  │ graph │ │ vector │ │ tensor │ │ semantic │ │ docs   │ │ spatial│
@@ -368,12 +477,18 @@ VeriSimiser is NOT a replacement for VeriSimDB. It is a gateway drug.
   (Provenance, Lineage, Constraints, AccessControl, Temporal — plus
   Data and Metadata which are always-on) on your existing database.
   Zero commitment.
-* **VeriSimiser Tier 2** gives you the modality overlays (graph,
+* **VeriSimiser Tier 2** gives you the six overlay modalities (graph,
   vector, tensor, semantic, document, spatial) and the Simulation
   concern as sidecars. Incremental adoption.
-* **Full VeriSimDB** gives you the complete octad with native
-  cross-modal querying, VCL, and built-in drift normalisation. Full
-  commitment.
+* **Full VeriSimDB** gives you VeriSimDB's complete Octad — its
+  eight-modality API and model — with native cross-modal querying, VCL,
+  and built-in drift normalisation. Full commitment.
+
+Note the asymmetry: VeriSimiser Tier 2 ships six of VeriSimDB's eight
+modalities, because Temporal and Provenance are Tier 1 concerns here.
+"Octad" in this README always means the concern Octad unless it is
+written "VeriSimDB's Octad"; see <<octad-vocabulary,the vocabulary
+note>>.
 
 The migration path is Tier 1 → Tier 2 → full VeriSimDB (if you want
 it). Most users will be happy at Tier 1 or Tier 2.

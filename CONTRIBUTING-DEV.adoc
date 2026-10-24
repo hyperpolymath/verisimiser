@@ -85,9 +85,11 @@ threshold.
 
 == Adding a Tier 2 overlay
 
-Tier 2 overlays require additional storage alongside the target database
-(graph, vector, tensor, semantic, …). New overlays are not the same as
-new backends.
+Tier 2 overlays require additional storage alongside the target database.
+The overlay modality set is fixed at six (graph, vector, tensor,
+semantic, document, spatial) per ADR-0014; a seventh is an ontology
+change, not a config edit. New overlays are not the same as new
+backends.
 
 [%interactive]
 * [ ] Add a boolean field to `Tier2Config` in `src/manifest/mod.rs` (and
@@ -100,10 +102,21 @@ new backends.
       queries to the overlay.
 * [ ] Add a round-trip test in `src/codegen/overlay.rs::tests` covering
       the flag both on and off.
-* [ ] Update `README.adoc`'s *Octad: Eight Modalities* table to reflect
-      the new overlay's tier and storage.
+* [ ] Update the `README.adoc` <<tier-2-augmentation-layer,Tier 2>>
+      section (overlay modality set, storage, status) and the vocabulary
+      table in the README (anchor `octad-vocabulary`). The README no
+      longer has an "Octad: Eight Modalities" table. Note that
+      a *new* overlay changes the set's membership and so needs an ADR,
+      not just a README edit (ADR-0014 §14.3).
 
 == Style notes
+
+* **Vocabulary** (ADR-0014): unqualified `Octad` means VeriSimiser's
+  fixed eight-concern model; write `VeriSimDB's Octad` for the upstream
+  eight-modality API/model. Tier 2 uses *overlay modality set* for the
+  fixed six and *enabled overlays* for a manifest's selection — not
+  "modality profile". Do not rename schema, CLI, or manifest fields to
+  match a doc change; that needs its own compatibility decision.
 
 * Treat `cargo clippy --all-targets -- -D warnings` as part of `cargo
   build`. The crate has no blanket `#![allow(...)]` blocks
