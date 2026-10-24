@@ -28,7 +28,8 @@ fn version_json_data_stays_pure_on_stdout() {
 }
 
 /// The `octad` table is data output and must land on stdout even with
-/// JSON diagnostics enabled.
+/// JSON diagnostics enabled. The banner names *VeriSimiser's* concern
+/// Octad, not VeriSimDB's upstream modality Octad (ADR-0014).
 #[test]
 fn octad_table_is_data_on_stdout() {
     let out = bin()
@@ -38,7 +39,7 @@ fn octad_table_is_data_on_stdout() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        stdout.contains("VeriSimDB Octad"),
+        stdout.contains("Verisimiser Octad"),
         "octad data on stdout, got: {stdout}"
     );
 }
