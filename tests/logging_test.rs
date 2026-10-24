@@ -39,7 +39,7 @@ fn octad_table_is_data_on_stdout() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        stdout.contains("Verisimiser Octad"),
+        stdout.contains("VeriSimiser Octad"),
         "octad data on stdout, got: {stdout}"
     );
 }
