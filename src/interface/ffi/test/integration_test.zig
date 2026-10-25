@@ -97,13 +97,14 @@ test "invalid backend is not supported" {
 // Octad Dimension Tests
 //==============================================================================
 
-test "enable valid octad dimension" {
+test "enable valid octad dimension without overlay returns sidecar_unavailable" {
     const handle = verisimiser_init() orelse return error.InitFailed;
     defer verisimiser_free(handle);
 
     // Enable provenance dimension (2) for entity 42
     const result = verisimiser_enable_dimension(handle, 42, 2);
-    try testing.expectEqual(@as(c_int, 0), result); // 0 = ok
+    // The overlay index is not wired into the FFI yet; no dimension was enabled.
+    try testing.expectEqual(@as(c_int, 7), result); // 7 = sidecar_unavailable
 }
 
 test "enable invalid octad dimension returns error" {
@@ -124,13 +125,14 @@ test "enable dimension with null handle returns null_pointer" {
 // Provenance Tests
 //==============================================================================
 
-test "record provenance with valid handle" {
+test "record provenance with valid handle returns sidecar_unavailable" {
     const handle = verisimiser_init() orelse return error.InitFailed;
     defer verisimiser_free(handle);
 
     // Record a create operation (0) for entity 42
     const result = verisimiser_record_provenance(handle, 42, 0, 0);
-    try testing.expectEqual(@as(c_int, 0), result); // 0 = ok
+    // The provenance sidecar is not wired into the FFI yet; no event was stored.
+    try testing.expectEqual(@as(c_int, 7), result); // 7 = sidecar_unavailable
 }
 
 test "record provenance with null handle" {
@@ -161,12 +163,13 @@ test "provenance length with null handle" {
 // Temporal Versioning Tests
 //==============================================================================
 
-test "record version with valid handle" {
+test "record version with valid handle returns sidecar_unavailable" {
     const handle = verisimiser_init() orelse return error.InitFailed;
     defer verisimiser_free(handle);
 
     const result = verisimiser_record_version(handle, 42, 0, 0);
-    try testing.expectEqual(@as(c_int, 0), result); // 0 = ok
+    // The temporal sidecar is not wired into the FFI yet; no snapshot was stored.
+    try testing.expectEqual(@as(c_int, 7), result); // 7 = sidecar_unavailable
 }
 
 test "record version with null handle" {
