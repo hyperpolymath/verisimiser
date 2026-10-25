@@ -35,9 +35,12 @@ cd "$ROOT"
 # Documents maintained upstream as template content, not as verisimiser docs.
 SKIP="docs/RSR_OUTLINE.adoc"
 
-# Recipe names: `name:`, `name arg:`, `name *args:`, `name +args:`, `name=default:`,
-# while ignoring attributes, comments, variable assignments and the
-# `alias`/`import`/`export`/`set`/`mod` keywords.
+# Print recipe-name candidates from the supplied file paths, one per line.
+# With no paths, read standard input. Recognises `name:`, `name arg:`,
+# `name *args:` and `name +args:`; this is not a full Justfile parser.
+# Skips indented lines, comments, leading `@` lines and declarations using
+# the `alias`/`import`/`export`/`set`/`mod` keywords.
+# Returns awk's exit status, including failure to read an input file.
 recipe_names() {
     awk '
         /^[ \t]/ { next }                       # indented body lines
