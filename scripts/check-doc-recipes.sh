@@ -35,10 +35,12 @@ cd "$ROOT"
 # Documents maintained upstream as template content, not as verisimiser docs.
 SKIP="docs/RSR_OUTLINE.adoc"
 
-# Let Just resolve declarations and imports for the active Justfile, including
-# quiet (`@name:`) recipes. Unimported .just files must not supply recipe names.
-# Use --list to include callable aliases, which --summary omits. Keep listing
-# separate from normalization so a Just error is not masked by sort.
+# Collect recipe names from the active Justfile and its imports, one per line.
+# Just parses declarations (including quiet `@name:` recipes); unimported .just
+# files cannot supply names. Use --list to include callable aliases, which
+# --summary omits. Normalize the listing by dropping parameters and comments.
+# Keep listing separate from normalization so Just's failure status propagates,
+# including failure to parse the Justfile or read an imported file.
 recipes="$(just --list --list-heading '' --list-prefix '')"
 recipes="$(printf '%s\n' "$recipes" | awk '
     /^[a-zA-Z][a-zA-Z0-9_-]*([[:space:]]|$)/ { print $1 }
