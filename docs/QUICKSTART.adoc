@@ -26,8 +26,8 @@ This page is the index; the three role-specific guides carry the detail:
 * **git** — `build.rs` stamps the binary with the current commit
 * **Optional:** `just` for the task recipes (`cargo install just --locked`)
 
-There are no system library dependencies: SQLite is compiled in, and nothing
-links OpenSSL.
+No additional system libraries are required beyond libc: SQLite is compiled
+in, and nothing links OpenSSL.
 
 == Sixty seconds
 
@@ -36,6 +36,7 @@ links OpenSSL.
 git clone https://github.com/hyperpolymath/verisimiser.git
 cd verisimiser
 cargo install --path .          # -> $HOME/.cargo/bin/verisimiser
+mkdir -p ~/projects/my-app
 cd ~/projects/my-app
 verisimiser init --database sqlite --name my-augmented-db
 verisimiser validate

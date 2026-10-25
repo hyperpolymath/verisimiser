@@ -17,8 +17,15 @@ a distro package or container image.
 * **Build-time only:** a C compiler (for the bundled SQLite) and `git` (the
   build script stamps the SHA from `HEAD`; if git is absent it records
   `unknown` rather than failing).
-* Target databases (PostgreSQL, SQLite, MongoDB) are *not* linked in; they
-  are reached over their own protocols and connection strings.
+* PostgreSQL and MongoDB are separate servers addressed by their own
+  protocols and connection strings.
+* SQLite is an embedded, file-based database; its library is bundled as
+  described above. In `[database]`, use `backend = "sqlite"` and set the
+  environment variable named by `connection-string-env` (default
+  `DATABASE_URL`) to a file path such as `/srv/myapp/app.db`. The legacy
+  `connection-string` field can hold the path directly. These target
+  connection settings are parsed but the CLI does not yet open the target
+  database from them.
 
 == Build from Source
 
@@ -29,14 +36,23 @@ cd verisimiser
 cargo build --release        # or: just build
 ----
 
-Output binary: `target/release/verisimiser`.
+Output binary: `target/release/verisimiser` on Unix, or
+`target/release/verisimiser.exe` on Windows MSVC.
 
-Verify the build is what you packaged:
+Verify the build is what you packaged. On Unix:
 
 [source,bash]
 ----
 ./target/release/verisimiser --version
 ./target/release/verisimiser version --json
+----
+
+On Windows MSVC (PowerShell):
+
+[source,powershell]
+----
+.\target\release\verisimiser.exe --version
+.\target\release\verisimiser.exe version --json
 ----
 
 `version --json` emits `version`, `git_sha`, `git_describe`, and
@@ -49,14 +65,16 @@ Verify the build is what you packaged:
 [source,bash]
 ----
 cargo install --path .
-cargo install --path . --root /opt/verisimiser     # -> /opt/verisimiser/bin/verisimiser
+cargo install --path . --root /opt/verisimiser     # Unix example: /opt/verisimiser/bin/verisimiser
 cargo install --path . --locked                    # honour Cargo.lock
 ----
 
-`cargo install` writes exactly one file: `<root>/bin/verisimiser` (default
-root `$HOME/.cargo`). There is **no `--prefix` flag** and no data, man page,
-or `.desktop` file to install — the old `just install --prefix=…` examples in
-this repo's templates never worked. Use `--root`.
+`cargo install` places the binary at `<root>/bin/verisimiser` on Unix or
+`<root>/bin/verisimiser.exe` on Windows MSVC (default root `$HOME/.cargo`
+on Unix, `%USERPROFILE%\.cargo` on Windows). There is **no `--prefix` flag**
+and no data, man page, or `.desktop` file to install — the old
+`just install --prefix=…` examples in this repo's templates never worked.
+Use `--root`.
 
 === Guix (experimental)
 
@@ -95,7 +113,7 @@ The complete file list to install is:
 |===
 | Path | Contents
 
-| `$PREFIX/bin/verisimiser` | The CLI binary
+| `$PREFIX/bin/verisimiser` (Unix) or `$PREFIX/bin/verisimiser.exe` (Windows MSVC) | The CLI binary
 |===
 
 No configuration file is installed: verisimiser has **no global config and

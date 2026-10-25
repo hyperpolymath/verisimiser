@@ -35,31 +35,14 @@ cd "$ROOT"
 # Documents maintained upstream as template content, not as verisimiser docs.
 SKIP="docs/RSR_OUTLINE.adoc"
 
-# Recipe names: `name:`, `name arg:`, `name *args:`, `name +args:`, `name=default:`,
-# while ignoring attributes, comments, variable assignments and the
-# `alias`/`import`/`export`/`set`/`mod` keywords.
-recipe_names() {
-    awk '
-        /^[ \t]/ { next }                       # indented body lines
-        /^#/     { next }                        # comments
-        /^@/     { next }                        # attributes/quiet lines
-        /^(alias|import|export|set|mod)[ \t!?]/ { next }
-        /^[a-zA-Z][a-zA-Z0-9_-]*([ \t][^:]*)?:/ {
-            line = $0
-            sub(/[ \t].*/, "", line)             # keep the leading token
-            sub(/:.*/, "", line)
-            if (line != "") print line
-        }
-    ' "$@"
-}
-
-recipes="$( {
-    [ -f Justfile ] && recipe_names Justfile
-    [ -f justfile ] && recipe_names justfile
-    for f in *.just; do
-        [ -f "$f" ] && recipe_names "$f"
-    done
-} | sort -u )"
+# Let Just resolve declarations and imports for the active Justfile, including
+# quiet (`@name:`) recipes. Unimported .just files must not supply recipe names.
+# Use --list to include callable aliases, which --summary omits. Keep listing
+# separate from normalization so a Just error is not masked by sort.
+recipes="$(just --list --list-heading '' --list-prefix '')"
+recipes="$(printf '%s\n' "$recipes" | awk '
+    /^[a-zA-Z][a-zA-Z0-9_-]*([[:space:]]|$)/ { print $1 }
+' | sort -u)"
 
 [ -n "$recipes" ] || { echo "check-doc-recipes: no recipes found" >&2; exit 2; }
 

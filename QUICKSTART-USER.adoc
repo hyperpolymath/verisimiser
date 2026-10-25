@@ -7,9 +7,9 @@
 == What is verisimiser?
 
 A CLI that augments an existing PostgreSQL, SQLite, or MongoDB database with
-VeriSimiser's eight-concern Octad — provenance, lineage, temporal versioning,
-access control, constraints — without migrating your schema or changing how
-your application talks to its database. The sidecar lives beside your
+VeriSimiser's eight-concern Octad — data, metadata, provenance, lineage,
+constraints, access control, temporal, simulation — without migrating your
+schema or changing how your application talks to its database. The sidecar lives beside your
 database; Tier 1 code never writes to it. See link:README.adoc[README.adoc]
 for the full picture and its honest limits.
 
@@ -139,8 +139,10 @@ and the legacy sections.
 verisimiser doctor                 # environment + toolchain checks
 verisimiser doctor -m verisimiser.toml   # also run manifest validation
 verisimiser --help                 # all subcommands
-verisimiser <subcommand> --help    # per-subcommand options
+verisimiser status --help          # per-subcommand options
 ----
+
+Replace `status` with another subcommand to see its options.
 
 If you installed `just`, `just doctor` and `just help-me` add repo-level
 checks and a paste-ready diagnostic bundle.

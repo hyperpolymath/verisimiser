@@ -6,8 +6,9 @@
 
 Clone → build → test → PR, using only commands that exist in this repo.
 
-TIP: Every command in this file is checked against the Justfile by
-`just doc-recipes` (see <<only-real-recipes,Only real recipes>>).
+TIP: `just doc-recipes` checks `just <recipe>` references in `----` and
+`....` blocks against the active Justfile and skips the template document
+`docs/RSR_OUTLINE.adoc` (see <<only-real-recipes,Only real recipes>>).
 
 == Tech Stack
 
@@ -68,13 +69,23 @@ cargo install just --locked
 ----
 git clone https://github.com/hyperpolymath/verisimiser.git
 cd verisimiser
-cargo fetch          # or: just deps  (also attempts the Zig toolchain)
+cargo fetch
 ----
 
-`just deps` additionally runs `scripts/install-zig.sh`, which fetches Zig
-from `ziglang.org` and is fail-soft: if Zig cannot be downloaded (proxies,
-restricted egress), the recipe still succeeds and you can ignore it unless
-you are working on `src/interface/ffi/`.
+Contributors working on `src/interface/ffi/` can use `just deps` to install
+Zig as well as fetch Cargo dependencies. First configure a writable
+`ZIG_PREFIX` (the default is `/usr/local`):
+
+[source,bash]
+----
+export ZIG_PREFIX="$HOME/.local"
+export PATH="$ZIG_PREFIX/bin:$PATH"
+just deps
+----
+
+The installer fetches Zig from `ziglang.org`. Download failures (proxies,
+restricted egress) are fail-soft; filesystem permission errors can still
+fail the recipe.
 
 == Build
 
@@ -154,7 +165,7 @@ fails with `Justfile does not contain recipe`:
 |===
 | Not a recipe | Use instead
 
-| `just setup`, `just setup-dev` | `cargo fetch`, or `just deps`; `./setup.sh` falls back to `just doctor`
+| `just setup`, `just setup-dev` | `cargo fetch`; for Zig too, configure a writable `ZIG_PREFIX` before `just deps`; `./setup.sh` falls back to `just doctor`
 | `just check-error-codes` | There is no error-code catalogue in this repo
 | `just e2e` | `just test` (integration tests in `tests/`)
 | `just panic-scan` | `just assail` (wraps `panic-attack assail`)
@@ -243,8 +254,8 @@ cargo test --all-targets --no-fail-fast
 ----
 
 * Commits are SSH-signed (`.github/CONTRIBUTING.md`); PRs target `main`.
-* `docs/CONTRIBUTING-DEV.adoc` has the per-area checklists (new drift
-  category, new Tier 2 overlay, vocabulary rules).
+* link:CONTRIBUTING-DEV.adoc[CONTRIBUTING-DEV.adoc] has the per-area
+  checklists (new drift category, new Tier 2 overlay, vocabulary rules).
 
 == Contractile Invariants
 

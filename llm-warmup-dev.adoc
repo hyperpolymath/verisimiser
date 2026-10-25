@@ -5,9 +5,9 @@
 == What is verisimiser?
 
 Augments an existing database with VeriSimiser's eight-concern Octad
-(ADR-0004): provenance, lineage, constraints, access control, temporal,
-simulation. VeriSimDB's upstream Octad is a different, eight-modality model
-(ADR-0014). See link:README.adoc[README.adoc].
+(ADR-0004): data, metadata, provenance, lineage, constraints, access control,
+temporal, simulation. VeriSimDB's upstream Octad is a different,
+eight-modality model (ADR-0014). See link:README.adoc[README.adoc].
 
 == Key Commands
 

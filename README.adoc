@@ -505,8 +505,8 @@ Per `docs/decisions/0009-build-path.adoc`, two build paths are
 
 [source,bash]
 ----
-cargo build --release          # -> target/release/verisimiser
-cargo install --path .         # -> $HOME/.cargo/bin/verisimiser
+cargo build --release          # Unix: target/release/verisimiser; Windows MSVC: target/release/verisimiser.exe
+cargo install --path .         # Unix: $HOME/.cargo/bin/verisimiser; Windows MSVC: %USERPROFILE%\.cargo\bin\verisimiser.exe
 cargo test --all-targets --no-fail-fast   # what CI runs
 ----
 
