@@ -70,6 +70,23 @@ fields (#88)
 
 ==== Documentation
 
+* docs(quickstart): rewrite QUICKSTART-DEV/USER/MAINTAINER and
+docs/QUICKSTART against the repository as it actually is — real rustup +
+cargo/`just` workflow (MSRV 1.85, bundled SQLite needs a C compiler), real
+recipes, real artifact paths (`cargo install --path .`,
+`target/release/verisimiser`), and an honest "not ready" list for the
+Containerfile, devcontainer, Nix and Tier 2. Drops every RSR-template
+placeholder and the recipes that never existed (`just setup`,
+`just e2e`, `just check-error-codes`, `just panic-scan`, `just llm-context`,
+`just build-release`, `just stapeln-*`, `just uninstall`)
+* feat(just): `just doc-recipes` + `scripts/check-doc-recipes.sh` fail when a
+documented `just` recipe is undefined, so quickstarts cannot drift from the
+Justfile again
+* docs: stop claiming unreleased/absent artifacts — no published release
+(no tags yet), Containerfile is a template stub rather than a working OCI
+build, and there is no `flake.nix`; TEST-NEEDS de-hardcoded from
+`/var/mnt/eclipse/...` and refreshed to the current 146 unit / 23 integration
+tests
 * docs(adr): 0014-modality-vocabulary — unqualified *Octad* is
 VeriSimiser's concern Octad; upstream is always *VeriSimDB's Octad*;
 Tier 2 is a six-member overlay modality set with per-manifest enabled

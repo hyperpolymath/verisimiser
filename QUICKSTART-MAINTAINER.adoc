@@ -1,18 +1,24 @@
 // SPDX-License-Identifier: CC-BY-SA-4.0
-// Template: QUICKSTART-MAINTAINER.adoc — packaging, deploying, and maintaining
-// Replace verisimiser, {{PACKAGE_NAME}}, {{DEPS}} with actuals
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 = verisimiser — Quick Start for Platform Maintainers
 :toc:
 :toclevels: 2
 
-== Overview
-
-This guide covers packaging, deploying, and maintaining verisimiser for
-distribution on your platform.
+Packaging, installing, and operating verisimiser. Every command below was
+checked against the repository at the time of writing; see
+<<what-is-not-packaging-ready,What is not packaging-ready>> before promising
+a distro package or container image.
 
 == Runtime Dependencies
 
-{{DEPS}}
+* **None** beyond libc. `verisimiser` is a single dynamically-linked-of-libc
+  binary; SQLite is compiled in via `rusqlite`'s `bundled` feature, so there
+  is no `libsqlite3` runtime dependency.
+* **Build-time only:** a C compiler (for the bundled SQLite) and `git` (the
+  build script stamps the SHA from `HEAD`; if git is absent it records
+  `unknown` rather than failing).
+* Target databases (PostgreSQL, SQLite, MongoDB) are *not* linked in; they
+  are reached over their own protocols and connection strings.
 
 == Build from Source
 
@@ -20,110 +26,162 @@ distribution on your platform.
 ----
 git clone https://github.com/hyperpolymath/verisimiser.git
 cd verisimiser
-just build-release
+cargo build --release        # or: just build
 ----
 
-Output: `{{BUILD_OUTPUT_PATH}}`
+Output binary: `target/release/verisimiser`.
+
+Verify the build is what you packaged:
+
+[source,bash]
+----
+./target/release/verisimiser --version
+./target/release/verisimiser version --json
+----
+
+`version --json` emits `version`, `git_sha`, `git_describe`, and
+`build_date`, baked in at compile time by `build.rs`.
 
 == Packaging
 
-=== Guix
+=== Cargo (upstream-native)
 
 [source,bash]
 ----
-guix build -f guix.scm
+cargo install --path .
+cargo install --path . --root /opt/verisimiser     # -> /opt/verisimiser/bin/verisimiser
+cargo install --path . --locked                    # honour Cargo.lock
 ----
+
+`cargo install` writes exactly one file: `<root>/bin/verisimiser` (default
+root `$HOME/.cargo`). There is **no `--prefix` flag** and no data, man page,
+or `.desktop` file to install — the old `just install --prefix=…` examples in
+this repo's templates never worked. Use `--root`.
+
+=== Guix (experimental)
+
+`guix.scm` describes a **development shell**, not a package:
+
+[source,bash]
+----
+guix shell -D -f guix.scm
+----
+
+It pins `version = "0.1.0"` while `Cargo.toml` is at 0.2.0, so do not use it
+as the basis of a distro package without updating it first. A real Guix
+package would need `cargo-build-system` and a vendored/`cargo-crates`
+source, which does not exist here yet.
 
 === Nix
 
-[source,bash]
-----
-nix build
-----
+There is **no `flake.nix`** in this repository. ADR-0009 keeps Nix/Guix in
+the tree as experimental; only `cargo` (dev) and the Containerfile (ops,
+aspirational) are named canonical.
 
-=== Container (Stapeln)
+=== Container (not ready)
 
-[source,bash]
-----
-just stapeln-export    # Generates Containerfile
-podman build -t verisimiser .
-----
+The `Containerfile` is an unfilled RSR template: build steps, artifact copy,
+and `ENTRYPOINT` are commented-out `TODO`s, and the header still contains
+unreplaced template metadata (project name, author, year). `podman build` therefore
+produces an empty image. Sealing and publishing should wait until it is
+implemented (chainguard `wolfi-base` builder → `static` runtime,
+`COPY --from=build /build/target/release/verisimiser /usr/local/bin/`).
 
-=== Manual Package
+=== Manual package
 
-[source,bash]
-----
-just install --prefix=/usr/local
-----
+The complete file list to install is:
 
-Files installed:
-
-[cols="1,2"]
+[cols="1,2",options="header"]
 |===
 | Path | Contents
 
-| `$PREFIX/bin/`
-| Executables
-
-| `$PREFIX/share/{{PACKAGE_NAME}}/`
-| Data files, assets
-
-| `$PREFIX/share/doc/{{PACKAGE_NAME}}/`
-| Documentation
-
-| `$PREFIX/share/applications/`
-| .desktop file (Linux, if GUI)
-
-| `$PREFIX/share/man/man1/`
-| Man pages
+| `$PREFIX/bin/verisimiser` | The CLI binary
 |===
 
-== Configuration
+No configuration file is installed: verisimiser has **no global config and
+no XDG lookup**. Every invocation reads a `verisimiser.toml` from the path
+given by `--manifest`/`-m`, defaulting to `./verisimiser.toml` in the working
+directory. That makes per-user and multi-tenant installs trivial — see
+<<multiple-instances,Multiple instances>>.
 
-Default config location: `$XDG_CONFIG_HOME/{{PACKAGE_NAME}}/config.toml`
+== Release Artifacts
 
-Fallback: `$HOME/.config/{{PACKAGE_NAME}}/config.toml`
+`.github/workflows/release.yml` triggers on any `v*` tag and builds archives
+for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+`aarch64-apple-darwin`, and `x86_64-pc-windows-msvc`, each with a `.sha256`
+companion, then publishes them with SLSA provenance attestations.
 
-== Health Checks
+**No release or tag exists yet**, so there is nothing to download: the source
+build is currently the only supported install path. The first tagged release
+will make the archives available.
 
-[source,bash]
-----
-just doctor            # Full diagnostic
-just run --version   # Version check
-just run --selftest  # Built-in self-test
-----
+== Operating
 
-== Updating
-
-[source,bash]
-----
-git pull
-just build-release
-just install --prefix=/usr/local
-----
-
-Or via OPSM: `opsm update {{PACKAGE_NAME}}`
-
-== Security Notes
-
-* License: MPL-2.0 (code) / CC-BY-SA-4.0 (docs)
-* All dependencies SHA-pinned
-* `panic-attacker` scan results: link:INSTALL-SECURITY-REPORT.adoc[]
-* OpenSSF Scorecard: see badge in README
-
-== Multi-Instance Deployment
-
-For deploying multiple instances (e.g., different users or tenants):
+=== Verify a deployment
 
 [source,bash]
 ----
-just install --prefix=/opt/{{PACKAGE_NAME}}-instance1 --config=/etc/{{PACKAGE_NAME}}/instance1.toml
-just install --prefix=/opt/{{PACKAGE_NAME}}-instance2 --config=/etc/{{PACKAGE_NAME}}/instance2.toml
+verisimiser version --json                       # binary identity
+verisimiser -m /etc/myapp/verisimiser.toml validate
+verisimiser -m /etc/myapp/verisimiser.toml status --json
+verisimiser doctor -m /etc/myapp/verisimiser.toml
 ----
 
-Each instance has isolated config, data, and logs.
+`status --json` is a documented, stable schema (`name`, `backend`,
+`sidecar_path`, `sidecar_storage`, `octad`) — safe to scrape from your
+monitoring.
 
-== Reporting Issues
+=== Retention / garbage collection
 
-* Upstream: https://github.com/hyperpolymath/verisimiser/issues
-* With diagnostic: `just help-me` (pre-fills context)
+[source,bash]
+----
+verisimiser -m verisimiser.toml gc --dry-run --json   # what would be deleted
+verisimiser -m verisimiser.toml gc                    # apply
+----
+
+Bounds come from `[retention]` in the manifest (`provenance-days`,
+`temporal-days`, `lineage-days`; `0` = keep forever). Schedule `gc`
+alongside your existing backup rotation.
+
+=== Sidecar backends
+
+`sqlite` (default reference store), `postgres` (DDL dialect only — runtime
+reads are **not** implemented and refuse explicitly), and the `json` family
+(`plain`, `ld`, `ndjson`) with crash-safe writes and cross-process locking.
+Pick per manifest under `[sidecar]`.
+
+[[multiple-instances]]
+=== Multiple instances
+
+Because configuration is a path, not a global file, run several augmented
+databases on one host:
+
+[source,bash]
+----
+mkdir -p /etc/verisimiser/{orders,analytics}
+cp verisimiser.toml /etc/verisimiser/orders/
+cp verisimiser.toml /etc/verisimiser/analytics/
+verisimiser -m /etc/verisimiser/orders/verisimiser.toml status
+verisimiser -m /etc/verisimiser/analytics/verisimiser.toml status
+----
+
+Give each manifest its own `[sidecar].path` so the stores do not collide.
+Connection strings are read from the environment variable named by
+`[database].connection-string-env`, so secrets stay in your existing secret
+manager rather than in the manifest.
+
+[[what-is-not-packaging-ready]]
+== What is not packaging-ready
+
+State this plainly in any package description:
+
+* **Tier 2 is stubs.** `[tier2]` overlay flags parse but nothing is
+  generated or routed; do not advertise graph/vector/tensor/spatial
+  overlays.
+* **PostgreSQL is codegen-only at runtime.** `provenance`, `history`,
+  `drift`, and `gc` refuse on the `postgres` sidecar backend.
+* **Container and devcontainer are templates**, not usable artifacts.
+* **No published releases yet**, so packagers must build from source and
+  record the commit SHA they built.
+* **Pre-alpha.** `Cargo.toml` says 0.2.0, APIs may move, and only the
+  `status --json` field set plus the manifest keys are documented as stable.

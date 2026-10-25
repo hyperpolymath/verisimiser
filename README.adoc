@@ -496,20 +496,36 @@ it). Most users will be happy at Tier 1 or Tier 2.
 == Building and Running
 
 Per `docs/decisions/0009-build-path.adoc`, two build paths are
-canonical:
+*named* canonical. Only the first is implemented today:
 
-* **`cargo build`** for development. MSRV pinned at Rust 1.85
-  (`rust-version` in `Cargo.toml`). The Justfile wraps the common
-  recipes.
-* **`Containerfile`** for ops. Produces a single OCI image suitable
-  for deployment, CI, and reproducible release builds.
+* **`cargo build`** — implemented, and the only supported path. MSRV is
+  Rust 1.85 (`rust-version` in `Cargo.toml`, edition 2024).
+  `rusqlite` compiles bundled SQLite, so you need a C compiler. The
+  Justfile wraps the common recipes.
 
-`flake.nix`, `guix.scm`, `.guix-channel`, and `.devcontainer/` remain
-in the tree as **experimental** paths — kept, not maintained.
+[source,bash]
+----
+cargo build --release          # -> target/release/verisimiser
+cargo install --path .         # -> $HOME/.cargo/bin/verisimiser
+cargo test --all-targets --no-fail-fast   # what CI runs
+----
 
-Pre-built release binaries for `linux-x86_64`, `linux-aarch64`,
-`macos-arm64`, and `windows-x86_64` are published by the release
-workflow (V-L3-L1, #58) with `.sha256` companions.
+* **`Containerfile`** — the intended ops path, **not yet implemented**.
+  It is still an RSR template stub: build steps, artifact copy, and
+  `ENTRYPOINT` are commented-out `TODO`s and the header retains unfilled
+  template metadata, so `podman build` produces an empty image.
+
+Everything else in the tree is **experimental**: `guix.scm` (a development
+shell, `guix shell -D -f guix.scm`, pinned to an older version than
+`Cargo.toml`), `.guix-channel`, and `.devcontainer/` (whose
+`devcontainer.json` and `Containerfile` still contain the unreplaced
+`PROJECT_NAME` template token). There is **no `flake.nix`** in this repository.
+
+No release has been published: the release workflow builds
+`linux-x86_64`, `linux-aarch64`, `macos-arm64`, and `windows-x86_64`
+archives with `.sha256` companions on any `v*` tag (V-L3-L1, #58), but no
+tag exists yet, so building from source is the only install route. See
+`QUICKSTART-USER.adoc` and `QUICKSTART-MAINTAINER.adoc`.
 
 == Integration with TypedQLiser
 

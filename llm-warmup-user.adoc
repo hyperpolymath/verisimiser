@@ -1,19 +1,32 @@
-== LLM Warmup — verisimiser (User)
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= LLM Warmup — verisimiser (User)
 
-=== What is verisimiser?
+== What is verisimiser?
 
-See README.adoc for overview.
+A CLI that adds provenance, lineage, temporal versioning, access control, and
+constraint/drift reporting to an existing PostgreSQL, SQLite, or MongoDB
+database using sidecar storage. See link:README.adoc[README.adoc].
 
-=== Key Commands
+== Key Commands
 
-* `+just setup+` — set up development environment
-* `+just build+` — build the project
-* `+just test+` — run tests
-* `+just doctor+` — diagnose issues
-* `+just heal+` — attempt auto-repair
+[source,bash]
+----
+cargo install --path .            # install (needs Rust 1.85+ and a C compiler)
+verisimiser init --database sqlite --name my-db
+verisimiser validate
+verisimiser status
+verisimiser octad
+verisimiser --help
+----
 
-=== Quick Context
+With `just`: `just build`, `just install`, `just doctor`, `just help-me`.
+There is no `just setup` or `just uninstall` recipe; uninstall with
+`cargo uninstall verisimiser`.
+
+== Quick Context
 
 * License: MPL-2.0
-* Part of hyperpolymath ecosystem
-* See EXPLAINME.adoc for architecture
+* No published releases yet — build from source
+* Pre-alpha: Tier 2 overlays and PostgreSQL runtime reads are not implemented
+* See link:QUICKSTART-USER.adoc[QUICKSTART-USER.adoc]

@@ -1,36 +1,55 @@
-== TEST-NEEDS.md — verisimiser
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= TEST-NEEDS.md — verisimiser
 
-=== CRG Grade: C — ACHIEVED 2026-04-04
+== CRG Grade: C — ACHIEVED 2026-04-04
 
-=== Current Test State
+== Current Test State
 
-[width="100%",cols="42%,29%,29%",options="header",]
+[width="auto",cols="34%,10%,56%",options="header",]
 |===
 |Category |Count |Notes
-|Integration tests (Rust) |2 |Dual compiled binaries (debug + release)
-
-|Verification tests |Unit-level |`+verification/tests/+` directory
-present
-
-|FFI tests |Present |`+src/interface/ffi/test/+`
+|Integration tests (Rust) |23 |5 files under `tests/`
+|Unit tests (Rust) |146 |`#[test]` in `src/**`
+|FFI tests |Present |`src/interface/ffi/test/` (Zig, run by `abi-ffi-gate.yml`)
+|ABI proofs |Present |`src/interface/abi/Verisimiser/ABI/*.idr` (Idris2, run by `provable.yml`)
 |===
 
-=== What’s Covered
+Integration test files:
 
-* [x] Dual integration test builds
+[cols="1,3",options="header"]
+|===
+|File |Covers
+
+|`tests/integration_test.rs` |Schema parse → overlay DDL, interceptors, manifest shapes, `OctadDimension`
+|`tests/logging_test.rs` |stdout data contract vs stderr diagnostics
+|`tests/provenance_fork_test.rs` |First-class provenance forks (ADR-0010)
+|`tests/sidecar_cli_test.rs` |`provenance` / `history` over the JSON sidecar
+|`tests/sqlite_intercept_e2e.rs` |End-to-end SQLite Tier 1 interception
+|===
+
+== What’s Covered
+
+* [x] Dual integration test builds (stable + MSRV 1.85)
 * [x] FFI verification layer
-* [x] Cargo test harness
+* [x] Cargo test harness, including CLI-driven tests via `CARGO_BIN_EXE_verisimiser`
+* [x] Idris2 ABI models machine-checked in CI
 
-=== Still Missing (for CRG B+)
+== Still Missing (for CRG B+)
 
-* [ ] Property-based verification testing
-* [ ] Fuzzing for edge cases
+* [ ] Property-based verification testing — `proptest` is a declared
+      dev-dependency but no test uses it yet
+* [ ] Fuzzing — `tests/fuzz/` contains only a placeholder
 * [ ] Benchmarking suite
-* [ ] Multi-target platform tests
+* [ ] Multi-target platform tests (the release workflow cross-builds, but
+      the test matrix is Linux-only)
 
-=== Run Tests
+== Run Tests
 
 [source,bash]
 ----
-cd /var/mnt/eclipse/repos/verisimiser && cargo test
+cd verisimiser
+cargo test --all-targets --no-fail-fast   # what CI runs
+just test                                 # cargo test
+just quality                              # fmt-check + lint + test
 ----
