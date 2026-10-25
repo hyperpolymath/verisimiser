@@ -1,24 +1,72 @@
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 = Quickstart
 :toc: preamble
 
-Get up and running in 60 seconds.
+Get from a clone to a validated manifest.
+
+This page is the index; the three role-specific guides carry the detail:
+
+[cols="1,3",options="header"]
+|===
+| Guide | Audience
+
+| link:../QUICKSTART-USER.adoc[QUICKSTART-USER]
+| Installing and running the CLI for the first time
+| link:../QUICKSTART-DEV.adoc[QUICKSTART-DEV]
+| Building from a checkout, running the test suite, contributing
+| link:../QUICKSTART-MAINTAINER.adoc[QUICKSTART-MAINTAINER]
+| Packaging, verifying, and operating a deployment
+|===
 
 == Prerequisites
 
-* Git 2.40+
-* just (command runner)
-* Your language toolchain (see Justfile for details)
+* **Rust 1.85+** (`rust-version` in `Cargo.toml`, edition 2024)
+* **A C compiler** — `rusqlite` builds bundled SQLite from source
+* **git** — `build.rs` stamps the binary with the current commit
+* **Optional:** `just` for the task recipes (`cargo install just --locked`)
 
-== From Template (New Project)
+No additional system libraries are required beyond libc: SQLite is compiled
+in, and nothing links OpenSSL.
+
+== Sixty seconds
 
 [source,bash]
 ----
-git clone https://github.com/hyperpolymath/rsr-template-repo my-project
-cd my-project
-rm -rf .git && git init -b main
-just init       # interactive placeholder replacement
+git clone https://github.com/hyperpolymath/verisimiser.git
+cd verisimiser
+cargo install --path .          # -> $HOME/.cargo/bin/verisimiser
+mkdir -p ~/projects/my-app
+cd ~/projects/my-app
+verisimiser init --database sqlite --name my-augmented-db
+verisimiser validate
+verisimiser status
 ----
+
+`init` writes `verisimiser.toml` in the current directory; `validate` exits
+non-zero if any manifest check fails.
+
+== Running the test suite
+
+[source,bash]
+----
+cd verisimiser
+cargo test --all-targets --no-fail-fast     # what CI runs
+just quality                                # fmt-check + lint + test
+----
+
+== What this repository does *not* give you yet
+
+* **No published release.** The `v*`-tagged release workflow exists, but no
+  tag or release has been created, so build from source.
+* **No usable container.** `Containerfile` and `.devcontainer/` are RSR
+  template stubs with `TODO` build steps and unfilled template metadata.
+* **No `flake.nix`.** `guix.scm` is an experimental dev shell only.
+* **No `just setup` / `just check-error-codes` / `just e2e` recipes.** Run
+  `just --list` for the authoritative set; `just doc-recipes` checks that
+  documentation does not reference recipes which do not exist.
 
 == Project Structure
 
-See README.adoc in the root for the Dual-Track architecture summary.
+See link:../QUICKSTART-DEV.adoc[QUICKSTART-DEV] for the annotated tree, and link:../README.adoc[README.adoc] for the Dual-Track
+(Tier 1 / Tier 2) architecture summary.

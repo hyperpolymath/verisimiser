@@ -109,6 +109,42 @@ backends.
       a *new* overlay changes the set's membership and so needs an ADR,
       not just a README edit (ADR-0014 §14.3).
 
+== Commands in docs must exist
+
+Documentation is treated as an interface: if a guide tells someone to run a
+command, that command has to work. The RSR templates this repo started from
+referenced recipes from other projects, so several guides shipped instructions
+that failed with `Justfile does not contain recipe`.
+
+* **Only reference recipes that the Justfile (or an imported `*.just`) defines.**
+  `just --list` is authoritative.
+* **`just doc-recipes`** runs `scripts/check-doc-recipes.sh`, which fails if any
+  `.adoc` code block mentions an undefined recipe. Run it after editing docs.
+* **Do not add a recipe just to satisfy a doc.** ADR-0002 removed aspirational
+  recipes that wrapped things which did not exist; the fix direction is to
+  correct the docs, not to invent the recipe.
+
+Known non-recipes, with the real alternative:
+
+[cols="2,2",options="header"]
+|===
+| Mentioned in old docs | Actually
+
+| `just setup`, `just setup-dev` | `cargo fetch` / `just deps` (`./setup.sh` falls back to `just doctor`)
+| `just check-error-codes` | No error-code catalogue exists in this repo
+| `just e2e` | `just test` (`tests/` holds the integration + e2e suite)
+| `just panic-scan` | `just assail`
+| `just llm-context` | read `0-AI-MANIFEST.a2ml` and `.claude/CLAUDE.md`
+| `just build-release` | `just build`
+| `just install --prefix=…` | `cargo install --path . --root <prefix>`
+| `just stapeln-*`, `just uninstall`, `just init` | Not present
+|===
+
+Template artifacts that are sync-managed from `hyperpolymath/standards`
+(`docs/RSR_OUTLINE.adoc`, `container/*`, `.machine_readable/**`) still describe
+the template's own recipes; `just doc-recipes` reports and skips the one it
+scans rather than rewriting synced content.
+
 == Style notes
 
 * **Vocabulary** (ADR-0014): unqualified `Octad` means VeriSimiser's

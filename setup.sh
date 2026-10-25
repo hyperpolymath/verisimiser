@@ -3,7 +3,8 @@
 # setup.sh — Universal setup script for verisimiser
 #
 # Detects your shell, platform, and installs prerequisites.
-# Then hands off to `just setup` for project-specific configuration.
+# Then runs `just setup`/`just setup-dev` if defined, else falls back to
+# `just doctor` (verisimiser defines neither).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/hyperpolymath/verisimiser/main/setup.sh | sh

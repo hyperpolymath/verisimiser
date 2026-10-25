@@ -58,6 +58,11 @@ assail:
 # `start`, `drift`, `provenance`, `history`, `status`, `octad`).
 # Re-add wrappers here when their underlying subcommands ship.
 
+# Verify that every `just <recipe>` in the docs is actually defined here.
+# Guards against template leftovers (just setup / e2e / check-error-codes).
+doc-recipes:
+    ./scripts/check-doc-recipes.sh
+
 # Run contractile checks (informational only — not required by CI per ADR-0008)
 contractile-check:
     @echo "Running contractile validation..."

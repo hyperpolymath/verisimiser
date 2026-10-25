@@ -1,111 +1,290 @@
 // SPDX-License-Identifier: CC-BY-SA-4.0
-// Template: QUICKSTART-DEV.adoc — clone → build → test → PR
-// Replace verisimiser, {{BUILD_CMD}}, {{TEST_CMD}}, {{LANG_STACK}} with actuals
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 = verisimiser — Quick Start for Developers
 :toc:
 :toclevels: 2
 
+Clone → build → test → PR, using only commands that exist in this repo.
+
+TIP: `just doc-recipes` checks `just <recipe>` references in `----` and
+`....` blocks against the active Justfile and skips the template document
+`docs/RSR_OUTLINE.adoc` (see <<only-real-recipes,Only real recipes>>).
+
 == Tech Stack
 
-{{LANG_STACK}}
+* **Rust**, edition 2024, MSRV **1.85** (`rust-version` in `Cargo.toml`).
+* **SQLite via `rusqlite` with the `bundled` feature** — SQLite is compiled
+  from source at build time, so a C compiler is required.
+* **No system library dependencies** for the CLI itself (no OpenSSL, no
+  libsqlite3).
+* **Optional:** Zig 0.14.0 for the FFI seam (`scripts/install-zig.sh`),
+  Idris2 for the ABI proof job in CI. Neither is needed to build or test
+  the CLI.
 
 == Set Up Development Environment
 
-=== Option A: Guix (preferred)
+=== 1. Rust toolchain
 
 [source,bash]
 ----
-guix shell
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+. "$HOME/.cargo/env"
 ----
 
-=== Option B: Nix (fallback)
+`--profile minimal` installs `rustc` and `cargo` only. The quality recipes
+need clippy and rustfmt, so add them:
 
 [source,bash]
 ----
-nix develop
+rustup component add clippy rustfmt
 ----
 
-=== Option C: Manual
+To reproduce the MSRV leg of CI (`.github/workflows/rust-ci.yml` tests both
+`1.85` and `stable`):
+
+[source,bash]
+----
+rustup toolchain install 1.85
+----
+
+=== 2. `just` (optional, but the recipes are the documented interface)
+
+[source,bash]
+----
+cargo install just --locked
+----
+
+`.tool-versions` pins `just` at 1.36.0. Everything below also works as plain
+`cargo` commands if you skip this step.
+
+=== 3. System packages
+
+* A C compiler (`cc`, `gcc`, or `clang`) — required by `rusqlite`'s bundled
+  SQLite. On Debian/Ubuntu: `sudo apt install build-essential`.
+* `git` — used by `build.rs` to stamp the binary with the current SHA.
+
+=== 4. Clone and warm the cache
 
 [source,bash]
 ----
 git clone https://github.com/hyperpolymath/verisimiser.git
 cd verisimiser
-just setup-dev
+cargo fetch
 ----
+
+Contributors working on `src/interface/ffi/` can use `just deps` to install
+Zig as well as fetch Cargo dependencies. First configure a writable
+`ZIG_PREFIX` (the default is `/usr/local`):
+
+[source,bash]
+----
+export ZIG_PREFIX="$HOME/.local"
+export PATH="$ZIG_PREFIX/bin:$PATH"
+just deps
+----
+
+The installer fetches Zig from `ziglang.org`. Download failures (proxies,
+restricted egress) are fail-soft; filesystem permission errors can still
+fail the recipe.
 
 == Build
 
 [source,bash]
 ----
-{{BUILD_CMD}}
+just build                     # cargo build --release
+cargo build                    # faster debug loop
 ----
+
+Release binary: `target/release/verisimiser`.
+
+Per `docs/decisions/0009-build-path.adoc`, `cargo` is the canonical
+development path. The Containerfile is the intended ops path but is **not
+implemented yet** — it is still an RSR template stub with `TODO` build
+steps, so `podman build` does not produce a working image. See
+<<status-and-gotchas,Status and gotchas>>.
 
 == Test
 
 [source,bash]
 ----
-{{TEST_CMD}}
+just test                      # cargo test
 ----
+
+For CI parity (CI runs the wider set):
+
+[source,bash]
+----
+cargo test --all-targets --no-fail-fast
+----
+
+Suite layout (counts as of this commit):
+
+[cols="2,1,3",options="header"]
+|===
+| File | Tests | Covers
+
+| `tests/integration_test.rs` | 9 | Schema parse → overlay DDL, interceptors, manifest shapes, `OctadDimension`
+| `tests/sidecar_cli_test.rs` | 2 | `provenance` / `history` CLI over the JSON sidecar
+| `tests/provenance_fork_test.rs` | 4 | First-class provenance forks (ADR-0010)
+| `tests/logging_test.rs` | 6 | stdout data contract vs stderr diagnostics
+| `tests/sqlite_intercept_e2e.rs` | 2 | End-to-end SQLite Tier 1 interception
+| `src/**` unit tests | 146 | Per-module invariants
+|===
+
+Several tests execute the built binary through `CARGO_BIN_EXE_verisimiser`,
+which `cargo test` builds automatically — there is no separate "e2e" recipe
+or command to run.
+
+== Full quality gate
+
+[source,bash]
+----
+just quality      # fmt-check + lint + test
+----
+
+CI is stricter than `just lint`: it runs
+`cargo clippy --all-targets -- -D warnings`, while the recipe runs
+`cargo clippy -- -D warnings`. Run the CI form before pushing:
+
+[source,bash]
+----
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets --no-fail-fast
+----
+
+[[only-real-recipes]]
+== Only real recipes
+
+The Justfile is the contract for commands, and ADR-0002 removed recipes that
+wrapped things that did not exist. Some older docs and RSR template files
+still mention recipe names that are **not defined here** — running them
+fails with `Justfile does not contain recipe`:
+
+[cols="2,2",options="header"]
+|===
+| Not a recipe | Use instead
+
+| `just setup`, `just setup-dev` | `cargo fetch`; for Zig too, configure a writable `ZIG_PREFIX` before `just deps`; `./setup.sh` falls back to `just doctor`
+| `just check-error-codes` | There is no error-code catalogue in this repo
+| `just e2e` | `just test` (integration tests in `tests/`)
+| `just panic-scan` | `just assail` (wraps `panic-attack assail`)
+| `just llm-context` | Read `0-AI-MANIFEST.a2ml` and `.claude/CLAUDE.md`
+| `just build-release` | `just build`
+| `just stapeln-*`, `just uninstall` | Not present
+|===
+
+`just doc-recipes` fails if any `.adoc` code block references a recipe that
+the Justfile does not define.
 
 == Project Structure
 
 [source]
 ----
 verisimiser/
-├── src/                  # Source code
-├── src/abi/              # Idris2 ABI definitions (if applicable)
-├── ffi/zig/              # Zig FFI bridge (if applicable)
-├── tests/                # Test suite
-├── docs/                 # Documentation
-├── .machine_readable/    # Checkpoint files (STATE, META, ECOSYSTEM)
-├── Justfile              # Task runner recipes
-├── guix.scm              # Guix environment
-├── flake.nix             # Nix environment (fallback)
-└── 0-AI-MANIFEST.a2ml    # AI agent entry point
+├── src/
+│   ├── main.rs              # clap CLI: init, generate, start, drift, provenance,
+│   │                        #   history, status, octad, validate, doctor, gc, version
+│   ├── lib.rs               # library root
+│   ├── abi/                 # Rust-side ABI types (OctadDimension, ProvenanceEntry, …)
+│   ├── manifest/            # verisimiser.toml parsing + validation + status
+│   ├── codegen/             # schema parser, sidecar DDL, query interceptors
+│   ├── tier1/               # provenance, temporal, drift (concern Octad)
+│   ├── tier2/               # overlay modality stubs (not implemented)
+│   ├── sidecar/             # sqlite / postgres / json-family stores + locking
+│   ├── intercept/           # per-backend interception (sqlite today)
+│   └── interface/           # verified interface seam
+│       ├── abi/Verisimiser/ABI/*.idr   # Idris2 models + proofs
+│       ├── ffi/                        # Zig FFI bridge (build.zig, src/main.zig)
+│       └── generated/                  # generated C headers
+├── tests/                   # integration + CLI tests
+├── examples/                # blog-db, json-sidecar, golden (frozen codegen sample)
+├── docs/                    # decisions/ (ADRs), architecture/, theory/, …
+├── Justfile                 # task runner (imports contractile.just)
+├── Cargo.toml               # MSRV 1.85, edition 2024
+├── Containerfile            # TEMPLATE STUB — no build steps yet
+├── guix.scm                 # experimental dev shell
+└── 0-AI-MANIFEST.a2ml       # AI agent entry point
 ----
+
+[[status-and-gotchas]]
+== Status and gotchas
+
+* **`src/tier2/` is stubs.** The `[tier2]` manifest flags parse but do
+  nothing yet; no overlay DDL or query routing ships.
+* **`Containerfile` is a template.** It has commented-out `TODO` steps and
+  unfilled template metadata, so `podman build` produces an empty image.
+* **`flake.nix` does not exist.** `guix.scm` is a development shell
+  (`guix shell -D -f guix.scm`), not a package definition, and pins version
+  0.1.0 while `Cargo.toml` says 0.2.0.
+* **`.devcontainer/` is not usable.** `devcontainer.json` and
+  `.devcontainer/Containerfile` still contain the unreplaced `PROJECT_NAME`
+  template token.
+* **PostgreSQL runtime reads are not implemented.** `provenance`, `history`,
+  `drift`, and `gc` refuse explicitly on the `postgres` sidecar backend
+  rather than silently no-op.
 
 == Key Recipes
 
 [source,bash]
 ----
-just build          # Build the project
-just test           # Run tests
-just doctor         # Self-diagnostic
-just lint           # Lint and format
-just panic-scan     # Security scan via panic-attacker
-just tour           # Guided tour of the codebase
+just build          # cargo build --release
+just test           # cargo test
+just quality        # fmt-check + lint + test
+just lint           # cargo clippy -- -D warnings
+just fmt            # cargo fmt
+just fmt-check      # cargo fmt -- --check
+just doc            # rustdoc, opens in a browser
+just run -- --help  # cargo run -- --help  (note the extra --)
+just doctor         # checks tools, paths, permissions
+just deps           # Zig toolchain (fail-soft) + cargo fetch
+just assail         # panic-attack scan, if installed
+just must-check     # contractile MUST invariants (from contractile.just)
+just doc-recipes    # verify documented recipes exist
+just --list         # the authoritative list
 ----
 
 == Before Submitting a PR
 
 [source,bash]
 ----
-just lint           # Format and lint
-just test           # All tests pass
-just panic-scan     # No new security issues
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets --no-fail-fast
 ----
+
+* Commits are SSH-signed (`.github/CONTRIBUTING.md`); PRs target `main`.
+* link:CONTRIBUTING-DEV.adoc[CONTRIBUTING-DEV.adoc] has the per-area
+  checklists (new drift category, new Tier 2 overlay, vocabulary rules).
 
 == Contractile Invariants
 
-Read `.machine_readable/MUST.contractile` before making changes.
-Key invariants that must never be violated:
-
-{{MUST_INVARIANTS}}
-
-== LLM/AI Agent Development
-
-If using an AI assistant, load the warmup context first:
+Must/Trust/Dust/Intend contractiles live in
+`.machine_readable/contractiles/`. The MUST invariants are enforced by
+recipes imported from `contractile.just`:
 
 [source,bash]
 ----
-just llm-context    # Outputs role-appropriate context
+just must-check        # LICENSE, README, SPDX headers, no Dockerfile/Makefile
+just trust-verify      # licence content, no committed secrets, pinned images
+just contractile-check # presence check only (informational, ADR-0008)
 ----
 
-Or read `0-AI-MANIFEST.a2ml` and `.claude/CLAUDE.md` directly.
+Never write to the target database from Tier 1 code paths, and keep
+provenance chains append-only — see `docs/architecture/THREAT-MODEL.adoc`.
+
+== LLM/AI Agent Development
+
+There is no `just llm-context` recipe. Read these directly:
+
+* `0-AI-MANIFEST.a2ml` — canonical locations, invariants, startup checklist.
+* `.claude/CLAUDE.md` — repository conventions.
+* `.machine_readable/6a2/STATE.a2ml` — current project state.
 
 == Get Help
 
-* **Architecture**: link:EXPLAINME.adoc[EXPLAINME.adoc]
-* **Wiki**: https://github.com/hyperpolymath/verisimiser/wiki
-* **Report issue**: `just help-me`
+* **Architecture and claims**: link:EXPLAINME.adoc[EXPLAINME.adoc],
+  link:README.adoc[README.adoc], `docs/decisions/`
+* **Diagnostics**: `just doctor` output in any issue report
+* **Report issue**: `just help-me` prints the diagnostic bundle to paste
+  into https://github.com/hyperpolymath/verisimiser/issues/new

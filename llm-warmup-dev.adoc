@@ -1,19 +1,30 @@
-== LLM Warmup — verisimiser (Developer)
+// SPDX-License-Identifier: CC-BY-SA-4.0
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+= LLM Warmup — verisimiser (Developer)
 
-=== What is verisimiser?
+== What is verisimiser?
 
-See README.adoc for overview.
+Augments an existing database with VeriSimiser's eight-concern Octad
+(ADR-0004): data, metadata, provenance, lineage, constraints, access control,
+temporal, simulation. VeriSimDB's upstream Octad is a different,
+eight-modality model (ADR-0014). See link:README.adoc[README.adoc].
 
-=== Key Commands
+== Key Commands
 
-* `+just setup+` — set up development environment
-* `+just build+` — build the project
-* `+just test+` — run tests
-* `+just doctor+` — diagnose issues
-* `+just heal+` — attempt auto-repair
+* `just build` — `cargo build --release`
+* `just test` — `cargo test` (CI also runs `--all-targets --no-fail-fast`)
+* `just quality` — fmt-check + clippy + test
+* `just deps` — Zig toolchain (fail-soft) + `cargo fetch`
+* `just doctor` — toolchain/path diagnostics
+* `just heal` — best-effort repair of permissions and caches
+* `just doc-recipes` — verify docs reference only real recipes
 
-=== Quick Context
+There is no `just setup` or `just setup-dev`; use `cargo fetch` (or
+`./setup.sh`, which falls back to `just doctor`).
+
+== Quick Context
 
 * License: MPL-2.0
-* Part of hyperpolymath ecosystem
-* See EXPLAINME.adoc for architecture
+* MSRV 1.85, edition 2024; SQLite is bundled via `rusqlite`
+* Tier 2 (`src/tier2/`) is stubs; Containerfile is a template stub
+* See link:EXPLAINME.adoc[EXPLAINME.adoc] and `docs/decisions/`

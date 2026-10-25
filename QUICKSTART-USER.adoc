@@ -1,124 +1,169 @@
 // SPDX-License-Identifier: CC-BY-SA-4.0
-// Template: QUICKSTART-USER.adoc — 5-minute path to working software
-// Replace verisimiser, Verisimiser — See README.adoc for details., just run, Verisimiser started successfully. with actuals
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 = verisimiser — Quick Start for Users
 :toc:
 :toclevels: 2
 
 == What is verisimiser?
 
-Verisimiser — See README.adoc for details.
+A CLI that augments an existing PostgreSQL, SQLite, or MongoDB database with
+VeriSimiser's eight-concern Octad — data, metadata, provenance, lineage,
+constraints, access control, temporal, simulation — without migrating your
+schema or changing how your application talks to its database. The sidecar lives beside your
+database; Tier 1 code never writes to it. See link:README.adoc[README.adoc]
+for the full picture and its honest limits.
 
 == Prerequisites
 
-Before you begin, ensure you have:
+* **Rust 1.85 or newer** — verisimiser is distributed as source only, so you
+  build it yourself.
+* **A C compiler** (`cc`, `gcc`, or `clang`) — SQLite is compiled in from
+  source by `rusqlite`'s `bundled` feature.
+* **git** — to clone the repository.
+* **No database server is needed to install or run `--help`/`octad`/`version`.**
+  You only need your target database when you actually point a manifest at it.
 
-* **just** — task runner (https://github.com/casey/just[install guide])
-* Platform-specific requirements listed below
-
-[cols="1,3"]
-|===
-| Platform | Additional Requirements
-
-| Linux
-| See README.adoc
-
-| macOS
-| See README.adoc
-
-| Windows
-| See README.adoc
-|===
+TIP: Check for a published release first —
+https://github.com/hyperpolymath/verisimiser/releases. The release workflow
+exists (tag `v*` → four platform archives) but **no release has been published
+yet**, so today the source build is the only route.
 
 == Install
 
-=== Option 1: Standard Install (recommended)
+=== Option 1: `cargo install` (recommended)
 
 [source,bash]
 ----
-# Clone and set up
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+. "$HOME/.cargo/env"
+
 git clone https://github.com/hyperpolymath/verisimiser.git
 cd verisimiser
-just setup
+cargo install --path .
 ----
 
-The setup script will:
-
-* Detect your platform and shell
-* Install missing dependencies (with your permission)
-* Configure the application
-* Offer install location choices
-* Run a self-diagnostic to verify everything works
-
-=== Option 2: Container (via Stapeln)
+This installs to `$HOME/.cargo/bin/verisimiser`. If `verisimiser --version`
+is "command not found", add the directory to your `PATH`:
 
 [source,bash]
 ----
-just stapeln-run
+export PATH="$HOME/.cargo/bin:$PATH"
 ----
 
-=== Option 3: Portable (no system changes)
+=== Option 2: build without installing
 
 [source,bash]
 ----
-just install --portable --prefix=./verisimiser-portable
+cargo build --release
+./target/release/verisimiser --version
 ----
+
+Copy `target/release/verisimiser` wherever you like; it is a single binary
+with no runtime library dependencies beyond libc.
+
+=== Option 3: `just`
+
+If you have https://github.com/casey/just[`just`] installed:
+
+[source,bash]
+----
+just build      # cargo build --release
+just install    # cargo install --path .
+----
+
+`just install` takes no arguments. For a custom prefix use
+`cargo install --path . --root /opt/verisimiser` (binary lands in
+`/opt/verisimiser/bin/`).
+
+=== Not available yet
+
+* **No container image.** The `Containerfile` in the repo is still an
+  unfilled template, so `podman build` does not produce a working image.
+* **No `just setup`, `just stapeln-run`, or `just uninstall`.** Those appear
+  in some template docs but are not recipes in this repo; `just --list` is
+  authoritative.
 
 == First Run
 
+Create a manifest in the directory you want to augment, then inspect it:
+
 [source,bash]
 ----
-just run
+cd ~/projects/my-app
+verisimiser init --database sqlite --name my-augmented-db
 ----
 
-Expected output:
+That writes `verisimiser.toml` in the current directory (it refuses to
+overwrite an existing one unless you pass `--force`). `--database` accepts
+`postgresql`, `sqlite`, or `mongodb` and defaults to `postgresql`.
 
-[source]
+Check what you got:
+
+[source,bash]
 ----
-Verisimiser started successfully.
+verisimiser validate      # manifest checks; non-zero exit if any fail
+verisimiser status        # backend, sidecar path, which concerns are on
+verisimiser octad         # the eight concerns and their tier
 ----
+
+Generate sidecar DDL and query interceptors (needs a schema file):
+
+[source,bash]
+----
+# add: schema-source = "schema.sql"  under [database] in verisimiser.toml
+verisimiser generate      # writes into .verisim/
+----
+
+Without `schema-source`, `generate` warns and emits an empty overlay.
+
+== Configuration
+
+Everything lives in the `verisimiser.toml` you just created:
+
+* `[database]` — `backend` and `connection-string-env` (the name of the
+  environment variable holding the connection string; secrets stay out of
+  the file).
+* `[octad]` — which concerns are enabled.
+* `[sidecar]` — where the sidecar store lives (`sqlite`, `postgres`, or the
+  `json` family) and its path.
+* `[retention]` — how long `provenance`, `temporal`, and `lineage` data is
+  kept; enforced by `verisimiser gc`.
+
+See the manifest section of link:README.adoc[README.adoc] for a full example
+and the legacy sections.
 
 == Self-Diagnostic
 
-If something isn't working:
-
 [source,bash]
 ----
-just doctor
+verisimiser doctor                 # environment + toolchain checks
+verisimiser doctor -m verisimiser.toml   # also run manifest validation
+verisimiser --help                 # all subcommands
+verisimiser status --help          # per-subcommand options
 ----
 
-This checks all dependencies, permissions, paths, and connectivity.
-If it finds issues, it will suggest fixes.
+Replace `status` with another subcommand to see its options.
 
-To attempt automatic repair:
-
-[source,bash]
-----
-just heal
-----
-
-== Get Help
-
-* **In-app**: `just run --help`
-* **Guided tour**: `just tour`
-* **Report a problem**: `just help-me` (pre-fills diagnostic context)
-* **Wiki**: https://github.com/hyperpolymath/verisimiser/wiki
+If you installed `just`, `just doctor` and `just help-me` add repo-level
+checks and a paste-ready diagnostic bundle.
 
 == Uninstall
 
 [source,bash]
 ----
-just uninstall
+cargo uninstall verisimiser
 ----
 
-You will be asked:
-
-1. Which uninstall tier (Bennett reversible, parameter-based, standard, or secure)
-2. Whether to include or exclude your data
-3. Whether to clear caches and LLM models
+Or simply delete the binary (`~/.cargo/bin/verisimiser`, or the path you
+copied it to). Your data is untouched: the manifest is the
+`verisimiser.toml` you created, and sidecar data lives at the
+`[sidecar].path` recorded in it — remove that file only if you want the
+provenance/temporal history gone too.
 
 == Next Steps
 
-* Read the link:README.adoc[README] for full feature overview
-* Read the link:EXPLAINME.adoc[EXPLAINME] for architecture and design decisions
-* Try `just tour` for a guided walkthrough
+* link:README.adoc[README] — tiers, the eight concerns, and what is not
+  implemented yet.
+* link:EXPLAINME.adoc[EXPLAINME] — technology choices and the reasoning.
+* link:QUICKSTART-DEV.adoc[QUICKSTART-DEV] — building from a checkout,
+  running tests, contributing.
